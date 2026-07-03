@@ -3,6 +3,9 @@
 # 아래는 예시입니다 — 원하는 티커로 바꾸세요.
 AAPL
 NVDA
-TSLA
-MSFT
 GOOGL
+PLTR
+MRVL
+ARM
+ONDS
+RDW
