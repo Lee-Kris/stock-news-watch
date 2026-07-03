@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+# 주의: seen.json 은 무시하지 않습니다. 상태를 레포에 보존해야 합니다.

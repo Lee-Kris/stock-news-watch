@@ -1,0 +1,50 @@
+name: Stock News Watch
+
+on:
+  schedule:
+    # 30분마다 실행 (UTC 기준). GitHub 사정에 따라 몇 분 지연될 수 있습니다.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:   # Actions 탭에서 "Run workflow" 버튼으로 수동 실행/테스트
+
+# seen.json 을 커밋해서 상태를 보존하려면 쓰기 권한이 필요합니다.
+permissions:
+  contents: write
+
+# 같은 워크플로가 겹쳐 돌지 않도록 직렬화 (상태 파일 충돌 방지).
+concurrency:
+  group: stock-news-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run news watcher
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        run: python news_watcher.py
+
+      - name: Persist seen.json
+        run: |
+          if [ -n "$(git status --porcelain seen.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add seen.json
+            git commit -m "chore: update seen news state [skip ci]"
+            git push
+          else
+            echo "seen.json unchanged; nothing to commit."
+          fi
