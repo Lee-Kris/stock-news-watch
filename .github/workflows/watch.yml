@@ -41,12 +41,22 @@ jobs:
 
       - name: Persist seen.json
         run: |
-          if [ -n "$(git status --porcelain seen.json)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add seen.json
-            git commit -m "chore: update seen news state [skip ci]"
-            git push
-          else
+          if [ -z "$(git status --porcelain seen.json)" ]; then
             echo "seen.json unchanged; nothing to commit."
+            exit 0
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add seen.json
+          git commit -m "chore: update seen news state [skip ci]"
+          # Retry with rebase so a concurrent push (e.g. an edit to tickers.txt)
+          # doesn't lose the updated state on a "fetch first" rejection.
+          for attempt in 1 2 3; do
+            if git pull --rebase --autostash origin "$GITHUB_REF_NAME" && git push; then
+              exit 0
+            fi
+            echo "push attempt $attempt rejected; retrying in 5s..."
+            sleep 5
+          done
+          echo "::error::failed to push seen.json after 3 attempts"
+          exit 1
