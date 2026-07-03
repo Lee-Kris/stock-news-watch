@@ -1,4 +1,5 @@
 name: Stock News Watch
+# stock news watcher: fetch per-ticker news and email new links.
 
 on:
   schedule:
