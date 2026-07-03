@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+.omc/
 .venv/
 venv/
 .env
