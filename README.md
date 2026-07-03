@@ -5,7 +5,7 @@
 메일은 폰에서 열고 링크를 눌러 바로 원문을 확인할 수 있습니다.
 
 - 실행: **GitHub Actions** (클라우드) — 내 PC가 꺼져 있어도 30분마다 자동 확인
-- 알림: **Gmail SMTP** 로 메일 발송 → `leejh5709@cu911.com` (또는 원하는 주소)로 수신
+- 알림: **Gmail SMTP** 로 메일 발송 → `your-email@example.com` (또는 원하는 주소)로 수신
 - 새 뉴스만 골라서 보냄 (이미 본 뉴스는 `seen.json` 에 기록되어 중복 발송 안 함)
 
 ---
@@ -61,7 +61,7 @@
 |------|-----|
 | `GMAIL_USER` | 메일을 **보내는** Gmail 주소 (예: `myname@gmail.com`) |
 | `GMAIL_APP_PASSWORD` | 위에서 만든 16자리 앱 비밀번호 (공백 제거) |
-| `MAIL_TO` | 메일을 **받을** 주소 (예: `leejh5709@cu911.com`) |
+| `MAIL_TO` | 메일을 **받을** 주소 (예: `your-email@example.com`) |
 
 ### 4) Actions 켜기 & 첫 실행
 
@@ -115,7 +115,7 @@ DRY_RUN=1 python news_watcher.py
 ```bash
 export GMAIL_USER="myname@gmail.com"
 export GMAIL_APP_PASSWORD="앱비밀번호16자리"
-export MAIL_TO="leejh5709@cu911.com"
+export MAIL_TO="your-email@example.com"
 export EMAIL_ON_FIRST_RUN=1   # 첫 실행에도 메일 보내기
 python news_watcher.py
 ```
