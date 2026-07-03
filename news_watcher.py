@@ -46,7 +46,7 @@ MAX_TICKERS = 10
 TICKERS_FILE = "tickers.txt"
 SEEN_FILE = "seen.json"
 SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
-MAX_ITEMS_PER_EMAIL = 50          # safety cap so a mail never explodes
+MAX_ITEMS_PER_EMAIL = 200         # safety cap so a mail never explodes
 REQUEST_DELAY_SEC = 1.0           # polite pause between feed fetches
 USER_AGENT = "Mozilla/5.0 (compatible; StockNewsWatch/1.0)"
 
