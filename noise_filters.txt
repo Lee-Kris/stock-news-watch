@@ -1,0 +1,35 @@
+# 제목에 아래 단어/문구가 (하나라도) 들어간 기사는 "알맹이 없는 뉴스"로 보고 걸러냅니다.
+# - 대소문자 구분 없음, 단어 단위로 매칭됩니다 (예: "option" 은 "adoption" 을 거르지 않음).
+# - '#' 로 시작하는 줄과 빈 줄은 무시됩니다.
+# - 한 줄에 하나씩. 자유롭게 추가/삭제하세요. 이 파일이 비어 있으면 코드 기본값을 씁니다.
+#
+# 참고: "Why is AAPL stock up/down ..." 같은 급등락 클릭베이트 제목은
+#       파일과 별개로 코드에서 자동으로 걸러집니다.
+
+# 옵션/파생 관련 (콜·풋옵션, 특이 옵션거래 등)
+option
+options
+
+# 장전/장후 시세, 오늘의 급등락주
+premarket
+pre-market
+after hours
+after-hours
+mover
+movers
+gainers
+losers
+
+# 클릭베이트 / 알맹이 없는 요약
+here's why
+heres why
+what to know
+trending
+
+# 기술적 분석 (차트/지표 기반)
+moving average
+rsi
+technical analysis
+price target
+stock to watch
+stocks to watch

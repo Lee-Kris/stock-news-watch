@@ -87,6 +87,29 @@ TSLA
 
 ---
 
+## 원치 않는 뉴스 걸러내기 (노이즈 필터)
+
+"콜/풋옵션 때문에 올랐다·내렸다", "오늘의 급등주", 기술적 분석(RSI·이동평균) 같은
+**알맹이 없는 시세성 기사**를 자동으로 빼줍니다. 걸러낼 키워드는 `noise_filters.txt`
+에 한 줄에 하나씩 적으면 됩니다 (대소문자 무시, 단어 단위 매칭):
+
+```
+option
+options
+premarket
+technical analysis
+```
+
+- `#` 로 시작하는 줄과 빈 줄은 무시됩니다. 파일이 비어 있으면 코드 기본값이 쓰입니다.
+- `"Why is AAPL stock up today"` 같은 **급등락 클릭베이트 제목**은 이 파일과 별개로
+  코드에서 자동으로 걸러집니다.
+- 너무 많이 걸러지면 해당 키워드를 지우고, 덜 걸러지면 키워드를 추가하세요.
+
+> ⚠️ 이 도구는 Google News RSS에서 **제목·링크만** 받아옵니다. 본문·기자 이름(byline)이
+> 없어서 "기자가 쓴 심층 기사"인지 완벽히 판별하지는 못하고, **제목 기준**으로 걸러냅니다.
+
+---
+
 ## 실행 주기 바꾸기
 
 `.github/workflows/watch.yml` 의 `cron` 값을 바꾸면 됩니다 (UTC 기준. KST = UTC+9):
@@ -128,7 +151,8 @@ python news_watcher.py
 | 파일 | 설명 |
 |------|------|
 | `tickers.txt` | 감시할 티커 목록 (최대 10) |
-| `news_watcher.py` | 뉴스 수집 · 중복 판별 · 메일 발송 메인 스크립트 |
+| `noise_filters.txt` | 걸러낼 "알맹이 없는 뉴스" 키워드 목록 (옵션/급등락/기술적분석 등) |
+| `news_watcher.py` | 뉴스 수집 · 노이즈 필터 · 중복 판별 · 메일 발송 메인 스크립트 |
 | `requirements.txt` | 파이썬 의존성 (`feedparser`) |
 | `seen.json` | 이미 본 뉴스 기록 (자동 생성/갱신, 손대지 않아도 됨) |
 | `.github/workflows/watch.yml` | GitHub Actions 스케줄 워크플로 |

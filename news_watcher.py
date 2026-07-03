@@ -22,6 +22,7 @@ Environment variables:
 import html
 import json
 import os
+import re
 import smtplib
 import sys
 import time
@@ -45,10 +46,65 @@ SOURCES = [
 MAX_TICKERS = 10
 TICKERS_FILE = "tickers.txt"
 SEEN_FILE = "seen.json"
+NOISE_FILTERS_FILE = "noise_filters.txt"
 SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
 MAX_ITEMS_PER_EMAIL = 200         # safety cap so a mail never explodes
 REQUEST_DELAY_SEC = 1.0           # polite pause between feed fetches
 USER_AGENT = "Mozilla/5.0 (compatible; StockNewsWatch/1.0)"
+
+# --- Noise filtering ---------------------------------------------------------
+# Low-content "price action / options / clickbait" headlines are skipped so the
+# email keeps only substantive news. Phrases below are matched as whole words in
+# the title (case-insensitive). Editable via noise_filters.txt (one per line).
+DEFAULT_NOISE_FILTERS = [
+    "option", "options",              # call/put options, unusual options, options activity
+    "premarket", "pre-market",
+    "after hours", "after-hours",
+    "mover", "movers",
+    "gainers", "losers",
+    "here's why", "heres why",
+    "what to know",
+    "moving average",
+    "rsi",
+    "technical analysis",
+    "price target",
+    "stock to watch", "stocks to watch",
+    "trending",
+]
+
+# Clickbait "Why/What is <stock> up/down ..." price-move framing, always dropped.
+PRICE_MOVE_RE = re.compile(
+    r"\b(why|what|how)\b.{0,50}\b(stocks?|shares?)\b.{0,50}"
+    r"\b(up|down|higher|lower|surg\w*|soar\w*|plung\w*|jump\w*|tumbl\w*|"
+    r"rise|rising|rose|ris\w*|fall\w*|fell|climb\w*|slid\w*|slip\w*|"
+    r"gain\w*|drop\w*|slump\w*|rally|rallies|sink\w*|spike\w*|"
+    r"pop\w*|crash\w*|dip\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def load_noise_filters(path=NOISE_FILTERS_FILE):
+    """Load noise phrases (one per line, # comments) as compiled word-regexes.
+
+    Falls back to DEFAULT_NOISE_FILTERS when the file is missing or empty.
+    """
+    phrases = []
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if line and not line.startswith("#"):
+                    phrases.append(line)
+    if not phrases:
+        phrases = list(DEFAULT_NOISE_FILTERS)
+    return [re.compile(r"\b" + re.escape(p) + r"\b", re.IGNORECASE) for p in phrases]
+
+
+def is_noise(title, patterns):
+    """True if the title looks like low-content price-action/options filler."""
+    if PRICE_MOVE_RE.search(title):
+        return True
+    return any(p.search(title) for p in patterns)
 
 
 # --- Ticker loading ----------------------------------------------------------
@@ -246,6 +302,16 @@ def main():
 
     items = fetch_all(tickers)
     print(f"[info] fetched {len(items)} article link(s) across all sources.")
+
+    patterns = load_noise_filters()
+    kept = [it for it in items if not is_noise(it["title"], patterns)]
+    dropped = len(items) - len(kept)
+    if dropped:
+        print(
+            f"[info] filtered out {dropped} low-content item(s) "
+            f"(options/price-action/clickbait); {len(kept)} remain."
+        )
+    items = kept
 
     seen = load_seen()
     first_run = seen is None
