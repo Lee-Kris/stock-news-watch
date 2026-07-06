@@ -1,0 +1,21 @@
+# 유료(로그인/구독 필요) 매체 목록 — 여기 적힌 매체의 기사는 메일에서 제외됩니다.
+# 한 줄에 하나씩. '#' 로 시작하는 줄과 빈 줄은 무시됩니다. 대소문자 구분 안 함.
+# 뉴스 제목 끝에 붙는 매체 이름(예: "... - Bloomberg")을 기준으로 걸러냅니다.
+#
+# - 특정 매체 기사를 다시 받고 싶으면 그 줄 맨 앞에 '# '를 붙여 주석 처리하세요.
+# - 파일이 비어 있으면 코드에 내장된 기본 목록이 사용됩니다.
+Seeking Alpha
+The Wall Street Journal
+Wall Street Journal
+WSJ
+Bloomberg
+Barron's
+Barrons
+Financial Times
+The Economist
+The Information
+Business Insider
+Investor's Business Daily
+The New York Times
+New York Times
+CNBC Pro

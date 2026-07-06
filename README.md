@@ -1,8 +1,12 @@
 # 📈 Stock News Watch (주식 뉴스 감시 & 메일 알림)
 
-관심 있는 주식 티커(최대 10개)를 등록해 두면, **CNBC · Yahoo Finance · Seeking Alpha**
+관심 있는 주식 티커(최대 10개)를 등록해 두면, **CNBC · Yahoo Finance**
 에 새 뉴스가 올라올 때마다 **링크를 이메일로 보내주는** 자동 도구입니다.
 메일은 폰에서 열고 링크를 눌러 바로 원문을 확인할 수 있습니다.
+
+> 💡 **무료 기사만 보이도록** 설정돼 있습니다. 유료 구독(로그인/Pro)이 필요한
+> Seeking Alpha는 소스에서 제외했고, 그 외 유료 매체(WSJ·Bloomberg 등)도
+> `paywall_filters.txt` 로 걸러냅니다. 자세한 내용은 아래 "유료 기사 걸러내기" 참고.
 
 - 실행: **GitHub Actions** (클라우드) — 내 PC가 꺼져 있어도 하루 2번(아침 8시·오후 9시, KST) 자동 확인
 - 알림: **Gmail SMTP** 로 메일 발송 → `your-email@example.com` (또는 원하는 주소)로 수신
@@ -13,8 +17,8 @@
 ## 동작 방식 (요약)
 
 1. `tickers.txt` 에 적힌 티커들을 읽습니다 (최대 10개).
-2. 티커마다 Google News RSS를 CNBC / Yahoo Finance / Seeking Alpha 도메인으로
-   필터링해 최신 기사 링크를 가져옵니다.
+2. 티커마다 Google News RSS를 CNBC / Yahoo Finance 도메인으로
+   필터링해 최신 기사 링크를 가져옵니다 (유료 매체 Seeking Alpha는 제외).
 3. `seen.json` 과 비교해 **처음 보는 기사**만 골라냅니다.
 4. 새 기사가 있으면 티커별로 묶어 HTML 메일로 보냅니다.
 5. 본 기사를 `seen.json` 에 기록하고 레포에 다시 커밋합니다.
@@ -110,6 +114,26 @@ technical analysis
 
 ---
 
+## 유료 기사 걸러내기 (무료로 볼 수 있는 뉴스만)
+
+로그인이나 유료 구독(Pro/Premium)이 있어야 읽을 수 있는 기사는 최대한 제외합니다.
+
+- **Seeking Alpha**: 거의 모든 기사가 유료라서 **소스 자체에서 제외**했습니다.
+  이게 유료 벽의 가장 큰 원인이었습니다.
+  (구독 중이라 다시 받고 싶다면 `news_watcher.py` 의 `SOURCES` 에서 Seeking Alpha 줄의
+  맨 앞 `# ` 를 지우세요.)
+- **CNBC · Yahoo Finance**: 두 매체의 기사는 **대부분 무료**로 읽을 수 있습니다.
+- 그 외 유료 매체(WSJ·Bloomberg·Barron's·CNBC Pro 등)는 `paywall_filters.txt`
+  목록에 있으면 제외됩니다. 매체를 추가/삭제하려면 이 파일을 편집하세요 (한 줄에 하나).
+
+> ⚠️ **한계**: Google News는 제목 끝의 매체명을 "우리가 지정한 사이트"(CNBC/Yahoo)로
+> 표시합니다. 그래서 Yahoo에 재게재된 Bloomberg 기사처럼 **원 출처가 유료여도 Yahoo에선
+> 무료로 열리는 경우가 많습니다.** 반대로 CNBC의 일부 `CNBC Pro` 기사는 제목만으로는
+> 100% 걸러내지 못할 수 있습니다. 유료 링크가 계속 걸리면 알려주세요 — 링크의 최종
+> 주소를 따라가 유료 도메인을 직접 차단하는 방식으로 강화할 수 있습니다.
+
+---
+
 ## 실행 주기 바꾸기
 
 `.github/workflows/watch.yml` 의 `cron` 값을 바꾸면 됩니다 (UTC 기준. KST = UTC+9):
@@ -152,6 +176,7 @@ python news_watcher.py
 |------|------|
 | `tickers.txt` | 감시할 티커 목록 (최대 10) |
 | `noise_filters.txt` | 걸러낼 "알맹이 없는 뉴스" 키워드 목록 (옵션/급등락/기술적분석 등) |
+| `paywall_filters.txt` | 걸러낼 유료 매체 목록 (WSJ·Bloomberg·CNBC Pro 등) |
 | `news_watcher.py` | 뉴스 수집 · 노이즈 필터 · 중복 판별 · 메일 발송 메인 스크립트 |
 | `requirements.txt` | 파이썬 의존성 (`feedparser`) |
 | `seen.json` | 이미 본 뉴스 기록 (자동 생성/갱신, 손대지 않아도 됨) |

@@ -2,9 +2,9 @@
 """Stock news watcher.
 
 Reads tickers from ``tickers.txt``, fetches recent news for each ticker from
-CNBC, Yahoo Finance and Seeking Alpha (via Google News RSS scoped to each
-site), detects articles that have not been seen before, and emails the new
-links so they can be opened on a phone.
+CNBC and Yahoo Finance (via Google News RSS scoped to each site), drops
+low-content and paywalled headlines, detects articles that have not been seen
+before, and emails the new links so they can be opened on a phone.
 
 Already-seen article ids are stored in ``seen.json`` so only genuinely new
 articles are ever emailed. The script is designed to run unattended on a
@@ -40,13 +40,16 @@ import feedparser
 SOURCES = [
     ("CNBC", "cnbc.com"),
     ("Yahoo Finance", "finance.yahoo.com"),
-    ("Seeking Alpha", "seekingalpha.com"),
+    # Seeking Alpha는 대부분 유료(Premium/Pro) 기사라 기본 소스에서 제외했습니다.
+    # 유료 구독 중이라 다시 보고 싶으면 아래 줄의 맨 앞 '# '를 지우세요.
+    # ("Seeking Alpha", "seekingalpha.com"),
 ]
 
 MAX_TICKERS = 10
 TICKERS_FILE = "tickers.txt"
 SEEN_FILE = "seen.json"
 NOISE_FILTERS_FILE = "noise_filters.txt"
+PAYWALL_FILTERS_FILE = "paywall_filters.txt"
 SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
 MAX_ITEMS_PER_EMAIL = 200         # safety cap so a mail never explodes
 REQUEST_DELAY_SEC = 1.0           # polite pause between feed fetches
@@ -104,6 +107,48 @@ def is_noise(title, patterns):
     """True if the title looks like low-content price-action/options filler."""
     if PRICE_MOVE_RE.search(title):
         return True
+    return any(p.search(title) for p in patterns)
+
+
+# --- Paywall filtering -------------------------------------------------------
+# Google News titles end with " - <Publisher>". Articles from hard-paywalled
+# publishers (need login / paid subscription to read) are dropped so every
+# emailed link is free to read. Matched as whole words in the title
+# (case-insensitive). Editable via paywall_filters.txt (one publisher per line).
+DEFAULT_PAYWALL_PUBLISHERS = [
+    "Seeking Alpha",
+    "The Wall Street Journal", "Wall Street Journal", "WSJ",
+    "Bloomberg",
+    "Barron's", "Barrons",
+    "Financial Times",
+    "The Economist",
+    "The Information",
+    "Business Insider",
+    "Investor's Business Daily",
+    "The New York Times", "New York Times",
+    "CNBC Pro",
+]
+
+
+def load_paywall_filters(path=PAYWALL_FILTERS_FILE):
+    """Load paywalled-publisher names (one per line, # comments) as regexes.
+
+    Falls back to DEFAULT_PAYWALL_PUBLISHERS when the file is missing or empty.
+    """
+    phrases = []
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if line and not line.startswith("#"):
+                    phrases.append(line)
+    if not phrases:
+        phrases = list(DEFAULT_PAYWALL_PUBLISHERS)
+    return [re.compile(r"\b" + re.escape(p) + r"\b", re.IGNORECASE) for p in phrases]
+
+
+def is_paywalled(title, patterns):
+    """True if the title's publisher is a known hard-paywalled outlet."""
     return any(p.search(title) for p in patterns)
 
 
@@ -312,6 +357,16 @@ def main():
             f"(options/price-action/clickbait); {len(kept)} remain."
         )
     items = kept
+
+    paywall_patterns = load_paywall_filters()
+    free_items = [it for it in items if not is_paywalled(it["title"], paywall_patterns)]
+    blocked = len(items) - len(free_items)
+    if blocked:
+        print(
+            f"[info] filtered out {blocked} paywalled item(s) "
+            f"(Seeking Alpha/WSJ/Bloomberg/etc.); {len(free_items)} remain."
+        )
+    items = free_items
 
     seen = load_seen()
     first_run = seen is None
