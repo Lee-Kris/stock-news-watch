@@ -19,6 +19,7 @@ Environment variables:
                         the first run only establishes a baseline).
 """
 
+import calendar
 import html
 import json
 import os
@@ -51,6 +52,7 @@ SEEN_FILE = "seen.json"
 NOISE_FILTERS_FILE = "noise_filters.txt"
 PAYWALL_FILTERS_FILE = "paywall_filters.txt"
 SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
+MAX_AGE_HOURS = 24                # only email articles published within this window
 MAX_ITEMS_PER_EMAIL = 200         # safety cap so a mail never explodes
 REQUEST_DELAY_SEC = 1.0           # polite pause between feed fetches
 USER_AGENT = "Mozilla/5.0 (compatible; StockNewsWatch/1.0)"
@@ -190,6 +192,22 @@ def google_news_url(ticker, domain):
     )
 
 
+def entry_published_dt(entry):
+    """Return a tz-aware UTC datetime for the entry, or None if unavailable.
+
+    feedparser normalises RSS pubDate into a struct_time in UTC (GMT), so
+    calendar.timegm() gives the correct epoch seconds.
+    """
+    for key in ("published_parsed", "updated_parsed"):
+        tm = entry.get(key)
+        if tm:
+            try:
+                return datetime.fromtimestamp(calendar.timegm(tm), tz=timezone.utc)
+            except (TypeError, ValueError, OverflowError):
+                continue
+    return None
+
+
 def fetch_source(ticker, source_name, domain):
     """Fetch news items for one (ticker, source). Never raises.
 
@@ -208,6 +226,7 @@ def fetch_source(ticker, source_name, domain):
         if not link:
             continue
         key = entry.get("id") or link
+        dt = entry_published_dt(entry)
         items.append(
             {
                 "key": f"{ticker}::{key}",
@@ -216,6 +235,7 @@ def fetch_source(ticker, source_name, domain):
                 "title": entry.get("title", "(no title)").strip(),
                 "link": link,
                 "published": entry.get("published", ""),
+                "published_dt": dt.isoformat() if dt else "",
             }
         )
     return items
@@ -367,6 +387,37 @@ def main():
             f"(Seeking Alpha/WSJ/Bloomberg/etc.); {len(free_items)} remain."
         )
     items = free_items
+
+    # Only keep articles published within the recent window so old articles
+    # (e.g. history dumped when a new ticker is added) are never emailed.
+    try:
+        max_age_hours = int(os.environ.get("MAX_AGE_HOURS", str(MAX_AGE_HOURS)))
+    except ValueError:
+        max_age_hours = MAX_AGE_HOURS
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+    recent, undated = [], 0
+    for it in items:
+        stamp = it.get("published_dt")
+        if not stamp:
+            undated += 1
+            recent.append(it)  # undated is rare for Google News; keep to be safe
+            continue
+        try:
+            when = datetime.fromisoformat(stamp)
+        except ValueError:
+            recent.append(it)
+            continue
+        if when >= cutoff:
+            recent.append(it)
+    old = len(items) - len(recent)
+    if old:
+        print(
+            f"[info] filtered out {old} article(s) older than {max_age_hours}h; "
+            f"{len(recent)} remain."
+        )
+    if undated:
+        print(f"[info] {undated} article(s) had no publish date; kept them.")
+    items = recent
 
     seen = load_seen()
     first_run = seen is None
