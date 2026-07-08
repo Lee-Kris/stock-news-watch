@@ -33,3 +33,30 @@ technical analysis
 price target
 stock to watch
 stocks to watch
+
+# 실시간 주가 / 시세·프로필 페이지 (뉴스가 아니라 시세표)
+in real time
+real-time
+stock price
+quote & analysis
+historical price
+historical prices
+historical data
+price history
+closing price
+
+# 옵션 상세 / 거래량·거래내역
+call option
+put option
+options activity
+options volume
+unusual options
+trading volume
+shares traded
+day trading
+
+# 레버리지·단일종목 ETF 상품 (예: Corgi AAPL 2X Daily ETF)
+leveraged etf
+single-stock etf
+single stock etf
+daily target etf

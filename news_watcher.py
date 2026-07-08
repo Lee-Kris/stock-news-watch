@@ -51,9 +51,10 @@ TICKERS_FILE = "tickers.txt"
 SEEN_FILE = "seen.json"
 NOISE_FILTERS_FILE = "noise_filters.txt"
 PAYWALL_FILTERS_FILE = "paywall_filters.txt"
+TICKER_NAMES_FILE = "ticker_names.txt"
 SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
 MAX_AGE_HOURS = 24                # only email articles published within this window
-MAX_ITEMS_PER_EMAIL = 200         # safety cap so a mail never explodes
+MAX_EMAIL_LINKS = 10              # at most this many links per email (spread across tickers)
 REQUEST_DELAY_SEC = 1.0           # polite pause between feed fetches
 USER_AGENT = "Mozilla/5.0 (compatible; StockNewsWatch/1.0)"
 
@@ -63,6 +64,8 @@ USER_AGENT = "Mozilla/5.0 (compatible; StockNewsWatch/1.0)"
 # the title (case-insensitive). Editable via noise_filters.txt (one per line).
 DEFAULT_NOISE_FILTERS = [
     "option", "options",              # call/put options, unusual options, options activity
+    "call option", "put option",
+    "options activity", "options volume", "unusual options",
     "premarket", "pre-market",
     "after hours", "after-hours",
     "mover", "movers",
@@ -75,6 +78,15 @@ DEFAULT_NOISE_FILTERS = [
     "price target",
     "stock to watch", "stocks to watch",
     "trending",
+    # real-time price / quote / profile pages (not real articles)
+    "in real time", "real-time",
+    "stock price", "quote & analysis",
+    "historical price", "historical prices", "historical data",
+    "price history", "closing price",
+    # volume / trade-history filler
+    "trading volume", "shares traded", "day trading",
+    # leveraged / single-stock ETF products (e.g. "Corgi AAPL 2X Daily ETF")
+    "leveraged etf", "single-stock etf", "single stock etf", "daily target etf",
 ]
 
 # Clickbait "Why/What is <stock> up/down ..." price-move framing, always dropped.
@@ -86,6 +98,10 @@ PRICE_MOVE_RE = re.compile(
     r"pop\w*|crash\w*|dip\w*)\b",
     re.IGNORECASE,
 )
+
+# Leveraged / hype multipliers like "2X", "1.5x", "3X Daily" — usually leveraged
+# single-stock ETF products or "could 2x" hype, not substantive news.
+LEVERAGE_RE = re.compile(r"\b\d+(?:\.\d+)?x\b", re.IGNORECASE)
 
 
 def load_noise_filters(path=NOISE_FILTERS_FILE):
@@ -107,7 +123,7 @@ def load_noise_filters(path=NOISE_FILTERS_FILE):
 
 def is_noise(title, patterns):
     """True if the title looks like low-content price-action/options filler."""
-    if PRICE_MOVE_RE.search(title):
+    if PRICE_MOVE_RE.search(title) or LEVERAGE_RE.search(title):
         return True
     return any(p.search(title) for p in patterns)
 
@@ -152,6 +168,86 @@ def load_paywall_filters(path=PAYWALL_FILTERS_FILE):
 def is_paywalled(title, patterns):
     """True if the title's publisher is a known hard-paywalled outlet."""
     return any(p.search(title) for p in patterns)
+
+
+# --- Relevance filtering -----------------------------------------------------
+# Google News matches the ticker anywhere in the article, so a story about a
+# different company that merely mentions "AAPL" once gets returned. We keep an
+# item only if the ticker symbol OR a known company name appears in the TITLE.
+# Company names are read from ticker_names.txt ("TICKER = Name1, Name2").
+
+def load_ticker_names(path=TICKER_NAMES_FILE):
+    """Map TICKER -> [company aliases] from 'TICKER = name1, name2' lines."""
+    names = {}
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                sym, rest = line.split("=", 1)
+                aliases = [a.strip() for a in rest.split(",") if a.strip()]
+                names[sym.strip().upper()] = aliases
+    return names
+
+
+def is_relevant(title, ticker, names):
+    """True if the ticker symbol or a known company alias appears in the title."""
+    terms = [ticker] + names.get(ticker, [])
+    for term in terms:
+        if re.search(r"\b" + re.escape(term) + r"\b", title, re.IGNORECASE):
+            return True
+    return False
+
+
+# --- Deduplication & selection -----------------------------------------------
+
+def normalize_title(title):
+    """Lowercase, drop trailing ' - Publisher', reduce to alphanumeric words."""
+    base = re.sub(r"\s+[-|]\s+[^-|]+$", "", title)      # strip " - Publisher"
+    base = re.sub(r"[^a-z0-9]+", " ", base.lower())
+    return base.strip()
+
+
+def select_for_email(new_items, limit):
+    """Dedup near-identical stories, then pick up to `limit`, spread across
+    tickers and newest-first.
+
+    We cannot see real search volume, so "importance" is approximated by how
+    many sources covered the same headline (coverage) — those rank first.
+    """
+    # Cluster by (ticker, normalized title); keep newest rep, count coverage.
+    clusters = {}
+    for it in new_items:
+        ckey = (it["ticker"], normalize_title(it["title"]))
+        cluster = clusters.get(ckey)
+        if cluster is None:
+            clusters[ckey] = {"item": it, "sources": {it["source"]}}
+        else:
+            cluster["sources"].add(it["source"])
+            if (it.get("published_dt") or "") > (cluster["item"].get("published_dt") or ""):
+                cluster["item"] = it
+
+    by_ticker = {}
+    for cluster in clusters.values():
+        rep = dict(cluster["item"])
+        rep["coverage"] = len(cluster["sources"])
+        by_ticker.setdefault(rep["ticker"], []).append(rep)
+    for reps in by_ticker.values():
+        reps.sort(key=lambda r: (r["coverage"], r.get("published_dt") or ""), reverse=True)
+
+    # Round-robin across tickers so no single ticker fills the whole email.
+    order = sorted(by_ticker)
+    selected, idx, guard = [], 0, 0
+    while order and len(selected) < limit:
+        reps = by_ticker[order[idx % len(order)]]
+        if reps:
+            selected.append(reps.pop(0))
+        idx += 1
+        guard += 1
+        if guard > len(order) * (limit + 5):
+            break
+    return selected
 
 
 # --- Ticker loading ----------------------------------------------------------
@@ -419,6 +515,18 @@ def main():
         print(f"[info] {undated} article(s) had no publish date; kept them.")
     items = recent
 
+    # Keep only articles that actually mention the ticker/company in the title,
+    # so e.g. an AAPL search does not surface a Micron or SpaceX story.
+    names = load_ticker_names()
+    relevant = [it for it in items if is_relevant(it["title"], it["ticker"], names)]
+    off_topic = len(items) - len(relevant)
+    if off_topic:
+        print(
+            f"[info] filtered out {off_topic} off-topic item(s) "
+            f"(ticker/company not in title); {len(relevant)} remain."
+        )
+    items = relevant
+
     seen = load_seen()
     first_run = seen is None
     if first_run:
@@ -445,12 +553,17 @@ def main():
         print("[info] no new articles since last run. Nothing to email.")
         return 0
 
-    if len(new_items) > MAX_ITEMS_PER_EMAIL:
+    try:
+        max_links = int(os.environ.get("MAX_EMAIL_LINKS", str(MAX_EMAIL_LINKS)))
+    except ValueError:
+        max_links = MAX_EMAIL_LINKS
+    total_new = len(new_items)
+    new_items = select_for_email(new_items, max_links)
+    if total_new > len(new_items):
         print(
-            f"[warn] {len(new_items)} new items; capping email at "
-            f"{MAX_ITEMS_PER_EMAIL} (rest already saved as seen)."
+            f"[info] {total_new} new item(s) after filters; trimmed to "
+            f"{len(new_items)} (<= {max_links}), spread across tickers, newest first."
         )
-        new_items = new_items[:MAX_ITEMS_PER_EMAIL]
 
     print(f"[info] {len(new_items)} new article(s) -> sending email.")
     subject = f"📈 {len(new_items)} new stock news link(s): {', '.join(sorted({i['ticker'] for i in new_items}))}"

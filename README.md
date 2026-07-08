@@ -147,6 +147,40 @@ Google News 검색에는 **몇 년 전 기사나 "시세 페이지" 링크**도 
 
 ---
 
+## 관련 없는 뉴스 거르기 & 개수 제한
+
+받는 뉴스의 품질을 위해 다음이 적용됩니다.
+
+**① 티커 관련성 필터** — `AAPL` 을 검색하면 애플이 아닌데 본문에 "AAPL"만 스쳐
+언급된 기사(마이크론·스페이스X·티모바일 등)도 딸려 옵니다. 그래서 **제목에 티커
+심볼(AAPL) 또는 회사명(Apple)이 있어야** 통과시킵니다. 티커↔회사명은 `ticker_names.txt`
+에서 관리합니다:
+
+```
+AAPL  = Apple
+NVDA  = Nvidia
+GOOGL = Google, Alphabet
+```
+
+> `tickers.txt` 에 새 티커를 추가하면 `ticker_names.txt` 에도 회사명을 적어 주세요.
+> (안 적으면 "제목에 티커 심볼이 있어야" 통과하므로 회사명만 나온 기사가 누락될 수 있습니다.)
+
+**② 시세·옵션·레버리지ETF 차단** — "실시간 주가(in real time)", "Stock Price, Quote &
+Analysis" 같은 **시세 페이지**, "unusual options / options activity" 같은 **옵션·거래량**
+기사, "Corgi AAPL 2X Daily ETF" 같은 **레버리지·단일종목 ETF** 는 제외합니다.
+(키워드는 `noise_filters.txt` 에서 편집 가능)
+
+**③ 메일당 최대 10개** — 링크가 너무 많지 않도록 **한 통에 최대 10개**만 담고,
+여러 티커에 **고르게 분배**하며 **최신순**으로 고릅니다. 여러 매체가 동시에 보도한
+기사(중복)는 하나로 합쳐 더 중요하게 취급합니다. 개수는 `MAX_EMAIL_LINKS`(기본 10)로 조절.
+
+> ⚠️ 요청하신 "검색량 많은 뉴스" 기준은, 이 도구가 쓰는 무료 RSS에 **검색량/조회수
+> 데이터가 없어** 정확히 구현할 수 없습니다. 대신 **여러 소스에 중복 보도된 기사 우선 +
+> 최신순**으로 근사합니다. 진짜 인기도/화제성 기준이 꼭 필요하면, 유료 뉴스 API를 붙이는
+> 방식으로 확장할 수 있으니 말씀해 주세요.
+
+---
+
 ## 실행 주기 바꾸기
 
 `.github/workflows/watch.yml` 의 `cron` 값을 바꾸면 됩니다 (UTC 기준. KST = UTC+9):
@@ -190,6 +224,7 @@ python news_watcher.py
 | `tickers.txt` | 감시할 티커 목록 (최대 10) |
 | `noise_filters.txt` | 걸러낼 "알맹이 없는 뉴스" 키워드 목록 (옵션/급등락/기술적분석 등) |
 | `paywall_filters.txt` | 걸러낼 유료 매체 목록 (WSJ·Bloomberg·CNBC Pro 등) |
+| `ticker_names.txt` | 티커↔회사명 매핑 (관련 없는 뉴스 거르기용) |
 | `news_watcher.py` | 뉴스 수집 · 노이즈 필터 · 중복 판별 · 메일 발송 메인 스크립트 |
 | `requirements.txt` | 파이썬 의존성 (`feedparser`) |
 | `seen.json` | 이미 본 뉴스 기록 (자동 생성/갱신, 손대지 않아도 됨) |

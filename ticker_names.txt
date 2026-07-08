@@ -1,0 +1,21 @@
+# 티커 ↔ 회사명(별칭) 매핑.
+# 제목에 "티커(예: AAPL)" 또는 "여기 적은 회사명(예: Apple)" 중 하나라도 있어야
+# 그 티커 관련 뉴스로 보고 통과시킵니다. (AAPL 검색에 애플이 아닌 기사가 오는 것 방지)
+#
+# 형식:  TICKER = 회사명1, 회사명2, ...
+# - '#' 로 시작하는 줄과 빈 줄은 무시됩니다. 대소문자 구분 없음.
+# - tickers.txt 에 새 티커를 추가하면 여기에도 회사명을 적어 주세요.
+#   (여기에 없는 티커는 "제목에 티커 심볼이 있어야" 통과합니다.)
+
+AAPL  = Apple
+NVDA  = Nvidia
+GOOGL = Google, Alphabet
+PLTR  = Palantir
+MRVL  = Marvell
+ARM   = Arm Holdings, Arm
+ONDS  = Ondas
+RDW   = Redwire
+TSLA  = Tesla
+MSFT  = Microsoft
+AMZN  = Amazon
+META  = Meta, Facebook
