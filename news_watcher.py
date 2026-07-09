@@ -54,7 +54,7 @@ PAYWALL_FILTERS_FILE = "paywall_filters.txt"
 TICKER_NAMES_FILE = "ticker_names.txt"
 SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
 MAX_AGE_HOURS = 24                # only email articles published within this window
-MAX_EMAIL_LINKS = 10              # at most this many links per email (spread across tickers)
+MAX_PER_TICKER = 20               # at most this many links per ticker per email
 REQUEST_DELAY_SEC = 1.0           # polite pause between feed fetches
 USER_AGENT = "Mozilla/5.0 (compatible; StockNewsWatch/1.0)"
 
@@ -103,6 +103,32 @@ PRICE_MOVE_RE = re.compile(
 # single-stock ETF products or "could 2x" hype, not substantive news.
 LEVERAGE_RE = re.compile(r"\b\d+(?:\.\d+)?x\b", re.IGNORECASE)
 
+# Options / derivatives talk: bare "options", call/put near an options word,
+# "put/call", "$250 calls", a title mentioning both calls and puts, etc.
+OPTIONS_RE = re.compile(
+    r"\boptions?\b"
+    r"|\b(?:calls?|puts?)\b.{0,15}\b(?:option|options|contract|strike|expir\w*|premium)\b"
+    r"|\b(?:option|options|strike|expir\w*)\b.{0,15}\b(?:calls?|puts?)\b"
+    r"|\bput[-/ ]?call\b|\bcall[-/ ]?put\b"
+    r"|\b(?:calls?)\b.{0,20}\b(?:puts?)\b|\b(?:puts?)\b.{0,20}\b(?:calls?)\b"
+    r"|\$\d[\d.,]*\s?(?:calls?|puts?)\b"
+    r"|\bstrike price\b",
+    re.IGNORECASE,
+)
+
+# Price / quote / valuation talk (시세·가격 얘기), not substantive news.
+PRICE_TALK_RE = re.compile(
+    r"\b(?:share|stock|target)\s+price\b"
+    r"|\bprice\s+(?:target|prediction|forecast|analysis)\b"
+    r"|\bhistorical (?:price|prices|data)\b"
+    r"|\bprice history\b|\bclosing price\b"
+    r"|\bstock quote\b|\bquote & analysis\b"
+    r"|\bin real[- ]time\b"
+    r"|\b(?:overvalued|undervalued|valuation|fair value)\b"
+    r"|\bbuy or sell\b|\bworth buying\b",
+    re.IGNORECASE,
+)
+
 
 def load_noise_filters(path=NOISE_FILTERS_FILE):
     """Load noise phrases (one per line, # comments) as compiled word-regexes.
@@ -123,7 +149,8 @@ def load_noise_filters(path=NOISE_FILTERS_FILE):
 
 def is_noise(title, patterns):
     """True if the title looks like low-content price-action/options filler."""
-    if PRICE_MOVE_RE.search(title) or LEVERAGE_RE.search(title):
+    if (PRICE_MOVE_RE.search(title) or LEVERAGE_RE.search(title)
+            or OPTIONS_RE.search(title) or PRICE_TALK_RE.search(title)):
         return True
     return any(p.search(title) for p in patterns)
 
@@ -209,12 +236,12 @@ def normalize_title(title):
     return base.strip()
 
 
-def select_for_email(new_items, limit):
-    """Dedup near-identical stories, then pick up to `limit`, spread across
-    tickers and newest-first.
+def select_for_email(new_items, per_ticker_limit):
+    """Dedup near-identical stories, then cap each ticker to `per_ticker_limit`.
 
-    We cannot see real search volume, so "importance" is approximated by how
-    many sources covered the same headline (coverage) — those rank first.
+    Within a ticker, stories covered by more sources rank first (a rough proxy
+    for importance, since the free RSS has no real search-volume data), then
+    newest first.
     """
     # Cluster by (ticker, normalized title); keep newest rep, count coverage.
     clusters = {}
@@ -233,20 +260,12 @@ def select_for_email(new_items, limit):
         rep = dict(cluster["item"])
         rep["coverage"] = len(cluster["sources"])
         by_ticker.setdefault(rep["ticker"], []).append(rep)
-    for reps in by_ticker.values():
-        reps.sort(key=lambda r: (r["coverage"], r.get("published_dt") or ""), reverse=True)
 
-    # Round-robin across tickers so no single ticker fills the whole email.
-    order = sorted(by_ticker)
-    selected, idx, guard = [], 0, 0
-    while order and len(selected) < limit:
-        reps = by_ticker[order[idx % len(order)]]
-        if reps:
-            selected.append(reps.pop(0))
-        idx += 1
-        guard += 1
-        if guard > len(order) * (limit + 5):
-            break
+    selected = []
+    for ticker in sorted(by_ticker):
+        reps = by_ticker[ticker]
+        reps.sort(key=lambda r: (r["coverage"], r.get("published_dt") or ""), reverse=True)
+        selected.extend(reps[:per_ticker_limit])
     return selected
 
 
@@ -554,15 +573,15 @@ def main():
         return 0
 
     try:
-        max_links = int(os.environ.get("MAX_EMAIL_LINKS", str(MAX_EMAIL_LINKS)))
+        per_ticker = int(os.environ.get("MAX_PER_TICKER", str(MAX_PER_TICKER)))
     except ValueError:
-        max_links = MAX_EMAIL_LINKS
+        per_ticker = MAX_PER_TICKER
     total_new = len(new_items)
-    new_items = select_for_email(new_items, max_links)
+    new_items = select_for_email(new_items, per_ticker)
     if total_new > len(new_items):
         print(
             f"[info] {total_new} new item(s) after filters; trimmed to "
-            f"{len(new_items)} (<= {max_links}), spread across tickers, newest first."
+            f"{len(new_items)} (<= {per_ticker} per ticker), newest first."
         )
 
     print(f"[info] {len(new_items)} new article(s) -> sending email.")

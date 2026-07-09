@@ -165,14 +165,19 @@ GOOGL = Google, Alphabet
 > `tickers.txt` 에 새 티커를 추가하면 `ticker_names.txt` 에도 회사명을 적어 주세요.
 > (안 적으면 "제목에 티커 심볼이 있어야" 통과하므로 회사명만 나온 기사가 누락될 수 있습니다.)
 
-**② 시세·옵션·레버리지ETF 차단** — "실시간 주가(in real time)", "Stock Price, Quote &
-Analysis" 같은 **시세 페이지**, "unusual options / options activity" 같은 **옵션·거래량**
-기사, "Corgi AAPL 2X Daily ETF" 같은 **레버리지·단일종목 ETF** 는 제외합니다.
-(키워드는 `noise_filters.txt` 에서 편집 가능)
+**② 옵션·시세·레버리지ETF 차단** — 아래 유형은 제목에서 자동 제외됩니다:
+- **옵션/파생**: "options", "call/put option", "put/call ratio", "$250 calls",
+  "strike price", 콜·풋이 함께 언급된 제목 등
+- **시세·가격 얘기**: "stock/share/target price", "price target/prediction/forecast",
+  "in real time", "Stock Price, Quote & Analysis", "overvalued/undervalued/valuation",
+  "historical price/data", "closing price" 등
+- **레버리지·단일종목 ETF**: "Corgi AAPL 2X Daily ETF" 처럼 "2X/3X" 배수 상품
 
-**③ 메일당 최대 10개** — 링크가 너무 많지 않도록 **한 통에 최대 10개**만 담고,
-여러 티커에 **고르게 분배**하며 **최신순**으로 고릅니다. 여러 매체가 동시에 보도한
-기사(중복)는 하나로 합쳐 더 중요하게 취급합니다. 개수는 `MAX_EMAIL_LINKS`(기본 10)로 조절.
+(추가 키워드는 `noise_filters.txt` 에서 편집할 수 있고, 위 핵심 패턴은 코드에 내장되어 항상 적용됩니다.)
+
+**③ 종목당 최대 20개** — 한 티커에서 뉴스가 아무리 많아도 **최대 20개**까지만 담습니다.
+같은 티커 안에서는 여러 매체가 동시에 보도한 기사(중복)를 하나로 합쳐 더 중요하게 취급하고,
+그다음 **최신순**으로 고릅니다. 개수는 `MAX_PER_TICKER`(기본 20)로 조절할 수 있습니다.
 
 > ⚠️ 요청하신 "검색량 많은 뉴스" 기준은, 이 도구가 쓰는 무료 RSS에 **검색량/조회수
 > 데이터가 없어** 정확히 구현할 수 없습니다. 대신 **여러 소스에 중복 보도된 기사 우선 +
