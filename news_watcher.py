@@ -412,12 +412,15 @@ def save_seen(seen, path=SEEN_FILE):
 # links-only email, so the digest is never blocked on the LLM.
 
 SUMMARY_SYSTEM = (
-    "You are a financial news assistant. Given a stock ticker and today's news "
-    "headlines for it, write a concise summary in Korean. Rules: 2-4 short bullet "
-    "points; capture only substantive developments (earnings, products, deals, "
-    "guidance, regulation, analyst actions); consolidate redundant headlines; "
-    "neutral and factual tone; no investment advice and no price speculation. "
-    "Output only the Korean summary bullets, nothing else."
+    "You are a news-desk anchor delivering a short market briefing in Korean. "
+    "Given a stock ticker and today's news headlines for it, write a brief "
+    "anchor-style news briefing as flowing Korean prose (2-4 sentences, NOT bullet "
+    "points), as if reading the day's developments for that stock on air. Cover only "
+    "substantive developments (earnings, products, deals, guidance, regulation, "
+    "analyst actions); merge redundant headlines into one narrative; use a factual, "
+    "neutral, professional broadcast tone; no investment advice and no price "
+    "speculation. Open by naming the company/ticker naturally. Output only the "
+    "Korean briefing text, nothing else."
 )
 
 
@@ -437,7 +440,7 @@ def summarize_ticker(ticker, items, model=SUMMARY_MODEL):
     headlines = "\n".join(f"- {it['title']} ({it['source']})" for it in items)
     user = (
         f"티커: {ticker}\n\n오늘 수집된 뉴스 제목:\n{headlines}\n\n"
-        "이 종목의 핵심 뉴스를 한국어 불릿 2~4개로 요약해 주세요."
+        "이 종목의 오늘 뉴스를 뉴스 데스크 앵커가 브리핑하듯 한국어 2~4문장으로 정리해 주세요."
     )
     body = json.dumps(
         {
@@ -495,18 +498,18 @@ def summarize_all(new_items):
 
 
 def summary_to_html(summary):
-    """Render a plain-text (possibly bulleted) summary as a small HTML block."""
-    lines = [ln.strip() for ln in summary.splitlines() if ln.strip()]
-    bullets = "".join(
-        f"<li style='margin:2px 0'>{html.escape(ln.lstrip('-*• ').strip())}</li>"
-        for ln in lines
+    """Render the Korean news briefing as a styled prose block."""
+    paras = "".join(
+        f"<p style='margin:4px 0'>{html.escape(ln.lstrip('-*• ').strip())}</p>"
+        for ln in summary.splitlines()
+        if ln.strip()
     )
     return (
         "<div style='background:#f5f7fa;border-left:3px solid #0b57d0;"
-        "padding:8px 12px;margin:6px 0 10px;border-radius:4px'>"
-        "<div style='font-size:12px;color:#0b57d0;font-weight:600;margin-bottom:4px'>"
-        "🤖 오늘의 요약</div>"
-        f"<ul style='margin:0;padding-left:18px;color:#333'>{bullets}</ul></div>"
+        "padding:10px 14px;margin:6px 0 12px;border-radius:4px'>"
+        "<div style='font-size:12px;color:#0b57d0;font-weight:700;margin-bottom:4px'>"
+        "📰 뉴스 브리핑</div>"
+        f"<div style='color:#222;line-height:1.6'>{paras}</div></div>"
     )
 
 
@@ -528,8 +531,9 @@ def build_email_html(new_items, summaries=None):
     parts = [
         "<div style='font-family:-apple-system,Segoe UI,Roboto,sans-serif;"
         "font-size:15px;color:#111;line-height:1.5'>",
-        f"<h2 style='margin:0 0 12px'>📈 New stock news "
-        f"({len(new_items)} link{'s' if len(new_items) != 1 else ''})</h2>",
+        f"<h2 style='margin:0 0 12px'>📰 오늘의 종목 뉴스 브리핑 "
+        f"<span style='font-weight:400;color:#888;font-size:13px'>"
+        f"({len(new_items)}건)</span></h2>",
     ]
     for ticker in sorted(by_ticker):
         parts.append(
@@ -706,7 +710,7 @@ def main():
 
     print(f"[info] {len(new_items)} new article(s) -> sending email.")
     summaries = summarize_all(new_items)
-    subject = f"📈 {len(new_items)} new stock news link(s): {', '.join(sorted({i['ticker'] for i in new_items}))}"
+    subject = f"📰 오늘의 종목 뉴스 브리핑 ({len(new_items)}건): {', '.join(sorted({i['ticker'] for i in new_items}))}"
     body = build_email_html(new_items, summaries)
     ok = send_email(subject, body)
     return 0 if ok else 2
