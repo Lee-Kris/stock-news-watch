@@ -17,6 +17,9 @@ Environment variables:
     DRY_RUN             If "1", never sends mail; prints what it would send.
     EMAIL_ON_FIRST_RUN  If "1", email even on the very first run (default: no,
                         the first run only establishes a baseline).
+    ANTHROPIC_API_KEY   Claude API key. If set, each ticker's news is summarized
+                        in Korean and shown above its links. If unset, links only.
+    SUMMARIZE           If "0", skip AI summaries even when a key is present.
 """
 
 import calendar
@@ -55,6 +58,8 @@ TICKER_NAMES_FILE = "ticker_names.txt"
 SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
 MAX_AGE_HOURS = 24                # only email articles published within this window
 MAX_PER_TICKER = 20               # at most this many links per ticker per email
+SUMMARY_MODEL = "claude-haiku-4-5"  # Claude model used to summarize each ticker's news
+SUMMARY_MAX_TOKENS = 700            # cap on the summary length per ticker
 REQUEST_DELAY_SEC = 1.0           # polite pause between feed fetches
 USER_AGENT = "Mozilla/5.0 (compatible; StockNewsWatch/1.0)"
 
@@ -397,10 +402,96 @@ def save_seen(seen, path=SEEN_FILE):
         json.dump(pruned, fh, ensure_ascii=False, indent=2, sort_keys=True)
 
 
+# --- AI summary --------------------------------------------------------------
+# For each ticker with fresh news, ask Claude to summarize the headlines in
+# Korean. Best-effort: any failure (no key, package missing, API error) falls
+# back to a links-only email, so the digest is never blocked on the LLM.
+
+SUMMARY_SYSTEM = (
+    "You are a financial news assistant. Given a stock ticker and today's news "
+    "headlines for it, write a concise summary in Korean. Rules: 2-4 short bullet "
+    "points; capture only substantive developments (earnings, products, deals, "
+    "guidance, regulation, analyst actions); consolidate redundant headlines; "
+    "neutral and factual tone; no investment advice and no price speculation. "
+    "Output only the Korean summary bullets, nothing else."
+)
+
+
+def summarize_ticker(ticker, items, model=SUMMARY_MODEL):
+    """Return a short Korean summary of the ticker's news, or None on any failure."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        return None
+    try:
+        import anthropic
+    except ImportError:
+        print("[warn] 'anthropic' package not installed; skipping AI summaries.")
+        return None
+
+    headlines = "\n".join(f"- {it['title']} ({it['source']})" for it in items)
+    user = (
+        f"티커: {ticker}\n\n오늘 수집된 뉴스 제목:\n{headlines}\n\n"
+        "이 종목의 핵심 뉴스를 한국어 불릿 2~4개로 요약해 주세요."
+    )
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model=model,
+            max_tokens=SUMMARY_MAX_TOKENS,
+            system=SUMMARY_SYSTEM,
+            messages=[{"role": "user", "content": user}],
+        )
+        text = "\n".join(
+            b.text for b in resp.content if getattr(b, "type", None) == "text"
+        ).strip()
+        return text or None
+    except Exception as exc:  # noqa: BLE001 - summary is best-effort, never fatal
+        print(f"[warn] summary failed for {ticker}: {exc}")
+        return None
+
+
+def summarize_all(new_items):
+    """Summarize each ticker's news. Returns {ticker: summary_text}."""
+    if os.environ.get("SUMMARIZE", "1") == "0" or os.environ.get("DRY_RUN") == "1":
+        return {}
+    by_ticker = {}
+    for it in new_items:
+        by_ticker.setdefault(it["ticker"], []).append(it)
+    summaries = {}
+    for ticker, its in by_ticker.items():
+        summary = summarize_ticker(ticker, its)
+        if summary:
+            summaries[ticker] = summary
+    if summaries:
+        print(f"[info] generated AI summaries for {len(summaries)} ticker(s).")
+    return summaries
+
+
+def summary_to_html(summary):
+    """Render a plain-text (possibly bulleted) summary as a small HTML block."""
+    lines = [ln.strip() for ln in summary.splitlines() if ln.strip()]
+    bullets = "".join(
+        f"<li style='margin:2px 0'>{html.escape(ln.lstrip('-*• ').strip())}</li>"
+        for ln in lines
+    )
+    return (
+        "<div style='background:#f5f7fa;border-left:3px solid #0b57d0;"
+        "padding:8px 12px;margin:6px 0 10px;border-radius:4px'>"
+        "<div style='font-size:12px;color:#0b57d0;font-weight:600;margin-bottom:4px'>"
+        "🤖 오늘의 요약</div>"
+        f"<ul style='margin:0;padding-left:18px;color:#333'>{bullets}</ul></div>"
+    )
+
+
 # --- Email -------------------------------------------------------------------
 
-def build_email_html(new_items):
-    """Render new items grouped by ticker then source into an HTML body."""
+def build_email_html(new_items, summaries=None):
+    """Render new items grouped by ticker then source into an HTML body.
+
+    If ``summaries`` maps a ticker to a Korean summary, it is shown under that
+    ticker's heading, above the source links.
+    """
+    summaries = summaries or {}
     by_ticker = {}
     for item in new_items:
         by_ticker.setdefault(item["ticker"], {}).setdefault(
@@ -417,6 +508,8 @@ def build_email_html(new_items):
         parts.append(
             f"<h3 style='margin:20px 0 6px;color:#0b57d0'>{html.escape(ticker)}</h3>"
         )
+        if summaries.get(ticker):
+            parts.append(summary_to_html(summaries[ticker]))
         for source in sorted(by_ticker[ticker]):
             parts.append(
                 f"<div style='font-weight:600;margin:8px 0 2px;color:#555'>"
@@ -585,8 +678,9 @@ def main():
         )
 
     print(f"[info] {len(new_items)} new article(s) -> sending email.")
+    summaries = summarize_all(new_items)
     subject = f"📈 {len(new_items)} new stock news link(s): {', '.join(sorted({i['ticker'] for i in new_items}))}"
-    body = build_email_html(new_items)
+    body = build_email_html(new_items, summaries)
     ok = send_email(subject, body)
     return 0 if ok else 2
 
