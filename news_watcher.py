@@ -484,6 +484,15 @@ def summarize_all(new_items):
     """Summarize each ticker's news. Returns {ticker: summary_text}."""
     if os.environ.get("SUMMARIZE", "1") == "0" or os.environ.get("DRY_RUN") == "1":
         return {}
+    if not (
+        os.environ.get("GEMINI_API_KEY", "").strip()
+        or os.environ.get("GOOGLE_API_KEY", "").strip()
+    ):
+        print(
+            "[warn] GEMINI_API_KEY not set -- sending headline digest only "
+            "(no AI briefing). Add the secret to enable per-ticker briefings."
+        )
+        return {}
     by_ticker = {}
     for it in new_items:
         by_ticker.setdefault(it["ticker"], []).append(it)
@@ -515,18 +524,22 @@ def summary_to_html(summary):
 
 # --- Email -------------------------------------------------------------------
 
-def build_email_html(new_items, summaries=None):
-    """Render new items grouped by ticker then source into an HTML body.
+def _clean_title(title):
+    """Strip the trailing ' - Publisher' suffix from a Google News title."""
+    return re.sub(r"\s+[-|]\s+[^-|]+$", "", title).strip()
 
-    If ``summaries`` maps a ticker to a Korean summary, it is shown under that
-    ticker's heading, above the source links.
+
+def build_email_html(new_items, summaries=None):
+    """Render a per-ticker news briefing.
+
+    When an AI briefing exists for a ticker, only the briefing is shown (raw
+    links are intentionally omitted). When it does not (e.g. GEMINI_API_KEY is
+    unset), a clean de-duplicated headline digest is shown instead of raw links.
     """
     summaries = summaries or {}
     by_ticker = {}
     for item in new_items:
-        by_ticker.setdefault(item["ticker"], {}).setdefault(
-            item["source"], []
-        ).append(item)
+        by_ticker.setdefault(item["ticker"], []).append(item)
 
     parts = [
         "<div style='font-family:-apple-system,Segoe UI,Roboto,sans-serif;"
@@ -541,22 +554,32 @@ def build_email_html(new_items, summaries=None):
         )
         if summaries.get(ticker):
             parts.append(summary_to_html(summaries[ticker]))
-        for source in sorted(by_ticker[ticker]):
-            parts.append(
-                f"<div style='font-weight:600;margin:8px 0 2px;color:#555'>"
-                f"{html.escape(source)}</div><ul style='margin:0 0 4px;padding-left:20px'>"
-            )
-            for item in by_ticker[ticker][source]:
-                title = html.escape(item["title"])
-                link = html.escape(item["link"], quote=True)
-                when = html.escape(item["published"]) if item["published"] else ""
-                meta = f" <span style='color:#999;font-size:12px'>{when}</span>" if when else ""
-                parts.append(
-                    f"<li style='margin:4px 0'>"
-                    f"<a href='{link}' style='color:#0b57d0;text-decoration:none'>{title}</a>"
-                    f"{meta}</li>"
-                )
-            parts.append("</ul>")
+            continue
+        # No AI briefing — show a clean, de-duplicated headline digest
+        # (titles only, no raw links) rather than passing links through.
+        seen, titles = set(), []
+        for it in by_ticker[ticker]:
+            clean = _clean_title(it["title"])
+            if clean.lower() not in seen:
+                seen.add(clean.lower())
+                titles.append(clean)
+        lis = "".join(
+            f"<li style='margin:3px 0'>{html.escape(t)}</li>" for t in titles
+        )
+        parts.append(
+            f"<ul style='margin:4px 0;padding-left:20px;color:#333'>{lis}</ul>"
+        )
+
+    if not any(summaries.get(t) for t in by_ticker):
+        parts.append(
+            "<p style='background:#fff6e5;border-left:3px solid #f5a623;"
+            "padding:8px 12px;color:#7a5b00;font-size:13px;margin:16px 0;"
+            "border-radius:4px'>"
+            "ℹ️ AI 브리핑이 아직 생성되지 않아 <b>제목만</b> 표시했습니다. "
+            "GitHub 레포 <b>Settings → Secrets → Actions</b> 에 "
+            "<b>GEMINI_API_KEY</b> 를 등록하면, 종목별로 제목을 분석해 "
+            "하나의 뉴스 브리핑으로 만들어 드립니다.</p>"
+        )
     parts.append(
         "<p style='color:#999;font-size:12px;margin-top:24px'>"
         "Sent by stock-news-watch. Reply-free automated digest.</p></div>"
