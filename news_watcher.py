@@ -17,8 +17,9 @@ Environment variables:
     DRY_RUN             If "1", never sends mail; prints what it would send.
     EMAIL_ON_FIRST_RUN  If "1", email even on the very first run (default: no,
                         the first run only establishes a baseline).
-    ANTHROPIC_API_KEY   Claude API key. If set, each ticker's news is summarized
-                        in Korean and shown above its links. If unset, links only.
+    GEMINI_API_KEY      Google Gemini API key (free tier; GOOGLE_API_KEY also works).
+                        If set, each ticker's news is summarized in Korean and shown
+                        above its links. If unset, links only.
     SUMMARIZE           If "0", skip AI summaries even when a key is present.
 """
 
@@ -33,6 +34,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import urllib.request
 from urllib.parse import quote_plus
 
 import feedparser
@@ -58,7 +60,7 @@ TICKER_NAMES_FILE = "ticker_names.txt"
 SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
 MAX_AGE_HOURS = 24                # only email articles published within this window
 MAX_PER_TICKER = 20               # at most this many links per ticker per email
-SUMMARY_MODEL = "claude-haiku-4-5"  # Claude model used to summarize each ticker's news
+SUMMARY_MODEL = "gemini-2.5-flash"  # Google Gemini model (free tier) for summaries
 SUMMARY_MAX_TOKENS = 700            # cap on the summary length per ticker
 REQUEST_DELAY_SEC = 1.0           # polite pause between feed fetches
 USER_AGENT = "Mozilla/5.0 (compatible; StockNewsWatch/1.0)"
@@ -403,9 +405,11 @@ def save_seen(seen, path=SEEN_FILE):
 
 
 # --- AI summary --------------------------------------------------------------
-# For each ticker with fresh news, ask Claude to summarize the headlines in
-# Korean. Best-effort: any failure (no key, package missing, API error) falls
-# back to a links-only email, so the digest is never blocked on the LLM.
+# For each ticker with fresh news, ask Google Gemini to summarize the headlines
+# in Korean. Gemini has a free tier (Google AI Studio key, no billing needed),
+# called here via the plain REST API so there is no extra dependency.
+# Best-effort: any failure (no key, network, API error) falls back to a
+# links-only email, so the digest is never blocked on the LLM.
 
 SUMMARY_SYSTEM = (
     "You are a financial news assistant. Given a stock ticker and today's news "
@@ -418,14 +422,16 @@ SUMMARY_SYSTEM = (
 
 
 def summarize_ticker(ticker, items, model=SUMMARY_MODEL):
-    """Return a short Korean summary of the ticker's news, or None on any failure."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    """Return a short Korean summary of the ticker's news, or None on any failure.
+
+    Uses the Google Gemini REST API (free tier). The key is read from
+    GEMINI_API_KEY (GOOGLE_API_KEY is also accepted as a fallback name).
+    """
+    api_key = (
+        os.environ.get("GEMINI_API_KEY", "").strip()
+        or os.environ.get("GOOGLE_API_KEY", "").strip()
+    )
     if not api_key:
-        return None
-    try:
-        import anthropic
-    except ImportError:
-        print("[warn] 'anthropic' package not installed; skipping AI summaries.")
         return None
 
     headlines = "\n".join(f"- {it['title']} ({it['source']})" for it in items)
@@ -433,17 +439,38 @@ def summarize_ticker(ticker, items, model=SUMMARY_MODEL):
         f"티커: {ticker}\n\n오늘 수집된 뉴스 제목:\n{headlines}\n\n"
         "이 종목의 핵심 뉴스를 한국어 불릿 2~4개로 요약해 주세요."
     )
+    body = json.dumps(
+        {
+            "systemInstruction": {"parts": [{"text": SUMMARY_SYSTEM}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "generationConfig": {
+                "maxOutputTokens": SUMMARY_MAX_TOKENS,
+                "temperature": 0.3,
+                # Gemini 2.5 flash "thinks" by default and would consume the
+                # small token budget before writing; disable it for a direct answer.
+                "thinkingConfig": {"thinkingBudget": 0},
+            },
+        }
+    ).encode("utf-8")
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model}:generateContent"
+    )
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        method="POST",
+    )
     try:
-        client = anthropic.Anthropic(api_key=api_key)
-        resp = client.messages.create(
-            model=model,
-            max_tokens=SUMMARY_MAX_TOKENS,
-            system=SUMMARY_SYSTEM,
-            messages=[{"role": "user", "content": user}],
-        )
-        text = "\n".join(
-            b.text for b in resp.content if getattr(b, "type", None) == "text"
-        ).strip()
+        with urllib.request.urlopen(request, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        candidates = data.get("candidates") or []
+        if not candidates:
+            print(f"[warn] no summary returned for {ticker} (empty candidates).")
+            return None
+        parts = candidates[0].get("content", {}).get("parts") or []
+        text = "".join(p.get("text", "") for p in parts).strip()
         return text or None
     except Exception as exc:  # noqa: BLE001 - summary is best-effort, never fatal
         print(f"[warn] summary failed for {ticker}: {exc}")

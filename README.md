@@ -11,7 +11,7 @@
 - 실행: **GitHub Actions** (클라우드) — 내 PC가 꺼져 있어도 하루 2번(아침 8시·오후 9시, KST) 자동 확인
 - 알림: **Gmail SMTP** 로 메일 발송 → `your-email@example.com` (또는 원하는 주소)로 수신
 - 새 뉴스만 골라서 보냄 (이미 본 뉴스는 `seen.json` 에 기록되어 중복 발송 안 함)
-- 🤖 **AI 요약**: Claude API 키가 있으면 티커별로 "오늘의 핵심 뉴스"를 한국어로 요약해 링크 위에 함께 보냄
+- 🤖 **AI 요약**: 무료 Google Gemini API 키가 있으면 티커별로 "오늘의 핵심 뉴스"를 한국어로 요약해 링크 위에 함께 보냄
 
 ---
 
@@ -67,7 +67,7 @@
 | `GMAIL_USER` | 메일을 **보내는** Gmail 주소 (예: `myname@gmail.com`) |
 | `GMAIL_APP_PASSWORD` | 위에서 만든 16자리 앱 비밀번호 (공백 제거) |
 | `MAIL_TO` | 메일을 **받을** 주소 (예: `your-email@example.com`) |
-| `ANTHROPIC_API_KEY` | (선택) Claude API 키. 넣으면 티커별 AI 요약이 추가됨. 없으면 요약 없이 링크만 |
+| `GEMINI_API_KEY` | (선택) **무료** Google Gemini API 키. 넣으면 티커별 AI 요약이 추가됨. 없으면 요약 없이 링크만 |
 
 ### 4) Actions 켜기 & 첫 실행
 
@@ -188,17 +188,20 @@ GOOGL = Google, Alphabet
 
 ---
 
-## AI 요약 (티커별 뉴스 정리)
+## AI 요약 (티커별 뉴스 정리) — 무료 Google Gemini 사용
 
-`ANTHROPIC_API_KEY` 시크릿을 등록하면, 메일에서 각 티커 제목 아래에 **그날 뉴스를
+`GEMINI_API_KEY` 시크릿을 등록하면, 메일에서 각 티커 제목 아래에 **그날 뉴스를
 한국어로 2~4줄 요약**해 줍니다. 요약은 수집한 **제목(헤드라인) 기반**으로 만들어집니다.
 
-- **모델**: `claude-haiku-4-5` (빠르고 저렴). `news_watcher.py` 의 `SUMMARY_MODEL` 로 변경 가능
-  (예: 더 정교하게 원하면 `claude-opus-4-8`).
-- **비용**: 하루 2회 × 티커 몇 개 요약은 사실상 월 몇백 원 이하 수준입니다.
-- **키 발급**: https://console.anthropic.com → API Keys 에서 발급 후 `ANTHROPIC_API_KEY` 시크릿으로 등록.
+- **무료**: Google **AI Studio**의 Gemini API는 **무료 등급**이 있어 신용카드 없이 쓸 수 있습니다.
+  하루 2회 × 티커 몇 개 요약은 무료 한도(분당·일일 요청 수) 안에 넉넉히 들어옵니다.
+- **키 발급**: https://aistudio.google.com/apikey 접속 → **Create API key** → 발급된 키(`AIza...`)를
+  GitHub 레포 **Settings → Secrets → Actions** 에 `GEMINI_API_KEY` 로 등록.
+- **모델**: `gemini-2.5-flash` (무료·빠름). `news_watcher.py` 의 `SUMMARY_MODEL` 로 변경 가능
+  (무료 한도가 빡빡하면 `gemini-2.0-flash` 로 바꾸세요).
 - **끄기**: 키를 빼거나, 워크플로에 환경변수 `SUMMARIZE=0` 을 주면 요약 없이 링크만 보냅니다.
 - **안전장치**: 키가 없거나 API 호출이 실패해도 메일은 **요약 없이 링크만** 정상 발송됩니다.
+- 추가 파이썬 패키지 설치가 필요 없습니다 (표준 라이브러리로 REST 호출).
 
 > ⚠️ 요약 근거는 기사 본문이 아니라 **제목**입니다. 제목만으로 판단하므로 세부 수치·뉘앙스는
 > 원문 링크에서 확인하세요.
