@@ -21,6 +21,11 @@ Environment variables:
                         If set, each ticker's news is summarized in Korean and shown
                         above its links. If unset, links only.
     SUMMARIZE           If "0", skip AI summaries even when a key is present.
+    BLOGGER_EMAIL       Blogger "post-by-email" (Mail2Blogger) secret address.
+                        If set, the same briefing is emailed there so Blogger
+                        auto-publishes it as a post titled "YYYY년 M월 D일 포트폴리오 뉴스".
+    FORCE_SEND          If "1", email/post the recent articles even if already
+                        seen (on-demand test send).
 """
 
 import calendar
@@ -58,7 +63,7 @@ NOISE_FILTERS_FILE = "noise_filters.txt"
 PAYWALL_FILTERS_FILE = "paywall_filters.txt"
 TICKER_NAMES_FILE = "ticker_names.txt"
 SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
-MAX_AGE_HOURS = 24                # only email articles published within this window
+MAX_AGE_HOURS = 28                # only email articles published within this window (once-daily run + buffer)
 MAX_PER_TICKER = 20               # at most this many links per ticker per email
 SUMMARY_MODEL = "gemini-flash-lite-latest"  # Google Gemini model (free tier) for summaries
 SUMMARY_MAX_TOKENS = 700            # cap on the summary length per ticker
@@ -587,11 +592,15 @@ def build_email_html(new_items, summaries=None):
     return "\n".join(parts)
 
 
-def send_email(subject, html_body):
-    """Send the digest via Gmail SMTP over SSL. Returns True on success."""
+def send_email(subject, html_body, recipient=None):
+    """Send an HTML email via Gmail SMTP over SSL. Returns True on success.
+
+    ``recipient`` defaults to MAIL_TO; pass an address (e.g. a Blogger
+    Mail2Blogger address) to send the same body somewhere else.
+    """
     user = os.environ.get("GMAIL_USER", "").strip()
     password = os.environ.get("GMAIL_APP_PASSWORD", "").strip()
-    recipient = os.environ.get("MAIL_TO", "").strip() or user
+    recipient = recipient or os.environ.get("MAIL_TO", "").strip() or user
 
     if os.environ.get("DRY_RUN") == "1":
         print(f"[dry-run] would send to {recipient or '(unset)'}: {subject}")
@@ -619,6 +628,12 @@ def send_email(subject, html_body):
 
 
 # --- Main --------------------------------------------------------------------
+
+def kst_today_title():
+    """Blog post title like '2026년 7월 16일 포트폴리오 뉴스' (Korean date, KST)."""
+    kst = datetime.now(timezone(timedelta(hours=9)))
+    return f"{kst.year}년 {kst.month}월 {kst.day}일 포트폴리오 뉴스"
+
 
 def main():
     tickers = load_tickers()
@@ -698,17 +713,23 @@ def main():
     if first_run:
         seen = {}
 
+    force_send = os.environ.get("FORCE_SEND") == "1"
     now_iso = datetime.now(timezone.utc).isoformat()
     new_items = []
     for item in items:
-        if item["key"] not in seen:
+        if force_send or item["key"] not in seen:
             new_items.append(item)
         seen[item["key"]] = seen.get(item["key"], now_iso)
 
     # Always persist state so the next run knows what we have seen.
     save_seen(seen)
 
-    if first_run and os.environ.get("EMAIL_ON_FIRST_RUN") != "1":
+    if force_send:
+        print(
+            f"[info] FORCE_SEND on: sending {len(new_items)} recent article(s) "
+            "regardless of seen state."
+        )
+    elif first_run and os.environ.get("EMAIL_ON_FIRST_RUN") != "1":
         print(
             f"[info] first run: recorded {len(items)} article(s) as baseline. "
             "No email sent (future runs email only NEW articles)."
@@ -716,7 +737,7 @@ def main():
         return 0
 
     if not new_items:
-        print("[info] no new articles since last run. Nothing to email.")
+        print("[info] no new/recent articles. Nothing to email.")
         return 0
 
     try:
@@ -733,9 +754,19 @@ def main():
 
     print(f"[info] {len(new_items)} new article(s) -> sending email.")
     summaries = summarize_all(new_items)
-    subject = f"📰 오늘의 종목 뉴스 브리핑 ({len(new_items)}건): {', '.join(sorted({i['ticker'] for i in new_items}))}"
+    tickers_line = ", ".join(sorted({i["ticker"] for i in new_items}))
+    subject = f"📰 오늘의 종목 뉴스 브리핑 ({len(new_items)}건): {tickers_line}"
     body = build_email_html(new_items, summaries)
     ok = send_email(subject, body)
+
+    # Optional: auto-publish the same briefing to a Blogger blog via its
+    # "post by email" (Mail2Blogger) address. The email SUBJECT becomes the
+    # post title, e.g. "2026년 7월 16일 포트폴리오 뉴스".
+    blogger = os.environ.get("BLOGGER_EMAIL", "").strip()
+    if blogger:
+        posted = send_email(kst_today_title(), body, recipient=blogger)
+        print(f"[info] blog post {'sent' if posted else 'FAILED'} -> Blogger")
+
     return 0 if ok else 2
 
 

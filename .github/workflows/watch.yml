@@ -3,10 +3,14 @@ name: Stock News Watch
 
 on:
   schedule:
-    # 하루 2번 실행 (cron은 UTC 기준, GitHub 사정에 따라 몇 분 지연될 수 있음).
-    - cron: "0 23 * * *"   # 08:00 KST (아침 8시)
-    - cron: "0 12 * * *"   # 21:00 KST (오후 9시)
+    # 하루 1번 실행: 06:00 KST = 21:00 UTC(전날). GitHub 사정에 따라 몇 분 지연될 수 있음.
+    - cron: "0 21 * * *"   # 06:00 KST (오전 6시)
   workflow_dispatch:   # Actions 탭에서 "Run workflow" 버튼으로 수동 실행/테스트
+    inputs:
+      force:
+        description: "지금 최근 뉴스를 강제로 발송/블로그 포스팅 (테스트용)"
+        type: boolean
+        default: false
 
 # seen.json 을 커밋해서 상태를 보존하려면 쓰기 권한이 필요합니다.
 permissions:
@@ -22,10 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -38,6 +42,8 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BLOGGER_EMAIL: ${{ secrets.BLOGGER_EMAIL }}
+          FORCE_SEND: ${{ inputs.force && '1' || '0' }}
         run: python news_watcher.py
 
       - name: Persist seen.json
