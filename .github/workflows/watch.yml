@@ -42,7 +42,11 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          BLOGGER_EMAIL: ${{ secrets.BLOGGER_EMAIL }}
+          BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+          BLOGGER_BLOG_URL: ${{ secrets.BLOGGER_BLOG_URL }}
           FORCE_SEND: ${{ inputs.force && '1' || '0' }}
         run: python news_watcher.py
 

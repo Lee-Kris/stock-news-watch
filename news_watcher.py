@@ -21,9 +21,14 @@ Environment variables:
                         If set, each ticker's news is summarized in Korean and shown
                         above its links. If unset, links only.
     SUMMARIZE           If "0", skip AI summaries even when a key is present.
-    BLOGGER_EMAIL       Blogger "post-by-email" (Mail2Blogger) secret address.
-                        If set, the same briefing is emailed there so Blogger
-                        auto-publishes it as a post titled "YYYY년 M월 D일 포트폴리오 뉴스".
+    BLOGGER_CLIENT_ID       Google OAuth client id (Blogger API v3).
+    BLOGGER_CLIENT_SECRET   Google OAuth client secret.
+    BLOGGER_REFRESH_TOKEN   OAuth refresh token with the blogger scope.
+    BLOGGER_BLOG_ID         Numeric blog id (or set BLOGGER_BLOG_URL instead).
+    BLOGGER_BLOG_URL        Blog URL (e.g. https://xxx.blogspot.com); the id is
+                            resolved from it when BLOGGER_BLOG_ID is unset.
+                            When all Blogger vars are set, the same briefing is
+                            auto-published as a post titled "YYYY년 M월 D일 포트폴리오 뉴스".
     FORCE_SEND          If "1", email/post the recent articles even if already
                         seen (on-demand test send).
 """
@@ -40,7 +45,7 @@ from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import urllib.request
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 
 import feedparser
 
@@ -627,6 +632,84 @@ def send_email(subject, html_body, recipient=None):
         return False
 
 
+# --- Blogger auto-post -------------------------------------------------------
+# Publish the same briefing to a Blogger blog via the Blogger API v3, using a
+# stored OAuth refresh token (no extra dependency; stdlib HTTP). Best-effort:
+# any failure or missing config just skips the post and logs a warning.
+
+def _google_access_token(client_id, client_secret, refresh_token):
+    """Exchange a refresh token for a short-lived access token."""
+    data = urlencode(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))["access_token"]
+
+
+def _blogger_blog_id(access_token, blog_url):
+    """Resolve a numeric blog id from a blog URL via the Blogger API."""
+    url = (
+        "https://www.googleapis.com/blogger/v3/blogs/byurl?url="
+        + quote_plus(blog_url)
+    )
+    req = urllib.request.Request(
+        url, headers={"Authorization": "Bearer " + access_token}
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))["id"]
+
+
+def post_to_blogger(title, html_body):
+    """Publish an HTML post to Blogger. Returns True/False, or None if unconfigured."""
+    client_id = os.environ.get("BLOGGER_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("BLOGGER_CLIENT_SECRET", "").strip()
+    refresh_token = os.environ.get("BLOGGER_REFRESH_TOKEN", "").strip()
+    blog_id = os.environ.get("BLOGGER_BLOG_ID", "").strip()
+    blog_url = os.environ.get("BLOGGER_BLOG_URL", "").strip()
+    if not (client_id and client_secret and refresh_token and (blog_id or blog_url)):
+        return None  # Blogger auto-post not configured
+
+    try:
+        token = _google_access_token(client_id, client_secret, refresh_token)
+        if not blog_id:
+            blog_id = _blogger_blog_id(token, blog_url)
+        payload = json.dumps(
+            {"kind": "blogger#post", "title": title, "content": html_body}
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            f"https://www.googleapis.com/blogger/v3/blogs/{blog_id}/posts/",
+            data=payload,
+            headers={
+                "Authorization": "Bearer " + token,
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            published = json.loads(resp.read().decode("utf-8"))
+        print(f"[info] blog post published: {published.get('url', '(no url)')}")
+        return True
+    except Exception as exc:  # noqa: BLE001 - blog post is best-effort
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8")[:300]  # HTTPError body, if any
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"[warn] Blogger post failed: {exc} {detail}")
+        return False
+
+
 # --- Main --------------------------------------------------------------------
 
 def kst_today_title():
@@ -759,13 +842,9 @@ def main():
     body = build_email_html(new_items, summaries)
     ok = send_email(subject, body)
 
-    # Optional: auto-publish the same briefing to a Blogger blog via its
-    # "post by email" (Mail2Blogger) address. The email SUBJECT becomes the
-    # post title, e.g. "2026년 7월 16일 포트폴리오 뉴스".
-    blogger = os.environ.get("BLOGGER_EMAIL", "").strip()
-    if blogger:
-        posted = send_email(kst_today_title(), body, recipient=blogger)
-        print(f"[info] blog post {'sent' if posted else 'FAILED'} -> Blogger")
+    # Auto-publish the same briefing to Blogger (API v3) titled
+    # "YYYY년 M월 D일 포트폴리오 뉴스", when Blogger secrets are configured.
+    post_to_blogger(kst_today_title(), body)
 
     return 0 if ok else 2
 
