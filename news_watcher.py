@@ -719,32 +719,39 @@ def kst_today_title():
 
 
 def write_shorts_json(new_items, summaries, path="data/latest_shorts.json"):
-    """Publish the top ticker's briefing so the shorts-generator repo can turn
-    it into a Short (JSON bridge). Picks the ticker with the most fresh articles
-    that also has an AI briefing; writes {date, ticker, topic, script}.
-    Best-effort: never fails the run."""
+    """Publish ALL tickers' briefings so the shorts-generator repo can weave them
+    into a single '오늘의 증시' Short (JSON bridge). Writes
+    {date, topic, items:[{ticker,name,summary}...], script}, ordered by how many
+    fresh articles each ticker had (most newsworthy first). `script` is a simple
+    single-ticker fallback for consumers that don't recompose. Never fails."""
     if not summaries:
         return
     counts = {}
     for it in new_items:
         counts[it["ticker"]] = counts.get(it["ticker"], 0) + 1
-    ranked = sorted(summaries.keys(), key=lambda t: counts.get(t, 0), reverse=True)
-    if not ranked:
+    names = load_ticker_names()
+    ordered = sorted(summaries.keys(), key=lambda t: counts.get(t, 0), reverse=True)
+    items = []
+    for t in ordered:
+        aliases = names.get(t.upper(), [])
+        items.append({"ticker": t,
+                      "name": aliases[0] if aliases else t,
+                      "summary": summaries[t]})
+    if not items:
         return
-    top = ranked[0]
-    aliases = load_ticker_names().get(top.upper(), [])
-    topic = aliases[0] if aliases else top   # prefer the (Korean) company name
     payload = {
         "date": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d"),
-        "ticker": top,
-        "topic": topic,
-        "script": summaries[top],
+        "topic": "오늘의 증시",
+        "items": items,
+        # Fallback single script (top ticker) for consumers that don't recompose.
+        "ticker": items[0]["ticker"],
+        "script": items[0]["summary"],
     }
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, ensure_ascii=False, indent=2)
-        print(f"[info] wrote {path} for shorts (topic={topic}, ticker={top}).")
+        print(f"[info] wrote {path} for shorts ({len(items)} ticker(s)).")
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] could not write {path}: {exc}")
 
