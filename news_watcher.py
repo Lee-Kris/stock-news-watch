@@ -718,6 +718,37 @@ def kst_today_title():
     return f"{kst.year}년 {kst.month}월 {kst.day}일 포트폴리오 뉴스"
 
 
+def write_shorts_json(new_items, summaries, path="data/latest_shorts.json"):
+    """Publish the top ticker's briefing so the shorts-generator repo can turn
+    it into a Short (JSON bridge). Picks the ticker with the most fresh articles
+    that also has an AI briefing; writes {date, ticker, topic, script}.
+    Best-effort: never fails the run."""
+    if not summaries:
+        return
+    counts = {}
+    for it in new_items:
+        counts[it["ticker"]] = counts.get(it["ticker"], 0) + 1
+    ranked = sorted(summaries.keys(), key=lambda t: counts.get(t, 0), reverse=True)
+    if not ranked:
+        return
+    top = ranked[0]
+    aliases = load_ticker_names().get(top.upper(), [])
+    topic = aliases[0] if aliases else top   # prefer the (Korean) company name
+    payload = {
+        "date": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d"),
+        "ticker": top,
+        "topic": topic,
+        "script": summaries[top],
+    }
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+        print(f"[info] wrote {path} for shorts (topic={topic}, ticker={top}).")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] could not write {path}: {exc}")
+
+
 def main():
     tickers = load_tickers()
     if not tickers:
@@ -837,6 +868,7 @@ def main():
 
     print(f"[info] {len(new_items)} new article(s) -> sending email.")
     summaries = summarize_all(new_items)
+    write_shorts_json(new_items, summaries)   # bridge: feed the shorts-generator
     tickers_line = ", ".join(sorted({i["ticker"] for i in new_items}))
     subject = f"📰 오늘의 종목 뉴스 브리핑 ({len(new_items)}건): {tickers_line}"
     body = build_email_html(new_items, summaries)
