@@ -71,7 +71,11 @@ SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
 MAX_AGE_HOURS = 28                # only email articles published within this window (once-daily run + buffer)
 MAX_PER_TICKER = 20               # at most this many links per ticker per email
 SUMMARY_MODEL = "gemini-flash-lite-latest"  # Google Gemini model (free tier) for summaries
+# Tried in order when the primary model fails (rate limit, model unavailable...).
+SUMMARY_FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
 SUMMARY_MAX_TOKENS = 700            # cap on the summary length per ticker
+# Set when every Gemini attempt fails, so the email can say why (not "no key").
+LAST_SUMMARY_ERROR = None
 REQUEST_DELAY_SEC = 1.0           # polite pause between feed fetches
 USER_AGENT = "Mozilla/5.0 (compatible; StockNewsWatch/1.0)"
 
@@ -434,12 +438,46 @@ SUMMARY_SYSTEM = (
 )
 
 
-def summarize_ticker(ticker, items, model=SUMMARY_MODEL):
-    """Return a short Korean summary of the ticker's news, or None on any failure.
+def _gemini_generate(model, api_key, user_text):
+    """One Gemini generateContent call. Returns the text (may be ""), or raises."""
+    body = json.dumps(
+        {
+            "systemInstruction": {"parts": [{"text": SUMMARY_SYSTEM}]},
+            "contents": [{"role": "user", "parts": [{"text": user_text}]}],
+            "generationConfig": {
+                "maxOutputTokens": SUMMARY_MAX_TOKENS,
+                "temperature": 0.3,
+                # Gemini 2.5 flash "thinks" by default and would consume the
+                # small token budget before writing; disable it for a direct answer.
+                "thinkingConfig": {"thinkingBudget": 0},
+            },
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model}:generateContent",
+        data=body,
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    candidates = data.get("candidates") or []
+    if not candidates:
+        return ""
+    parts = candidates[0].get("content", {}).get("parts") or []
+    return "".join(p.get("text", "") for p in parts).strip()
 
-    Uses the Google Gemini REST API (free tier). The key is read from
-    GEMINI_API_KEY (GOOGLE_API_KEY is also accepted as a fallback name).
+
+def summarize_ticker(ticker, items, model=SUMMARY_MODEL):
+    """Return a short Korean summary of the ticker's news, or None on failure.
+
+    Tries the configured model first, then falls back to other free-tier models,
+    retrying once on transient errors (429 rate limit / 5xx). The last error is
+    recorded in LAST_SUMMARY_ERROR so the email can explain what went wrong.
     """
+    global LAST_SUMMARY_ERROR
+
     api_key = (
         os.environ.get("GEMINI_API_KEY", "").strip()
         or os.environ.get("GOOGLE_API_KEY", "").strip()
@@ -452,46 +490,41 @@ def summarize_ticker(ticker, items, model=SUMMARY_MODEL):
         f"티커: {ticker}\n\n오늘 수집된 뉴스 제목:\n{headlines}\n\n"
         "이 종목의 오늘 뉴스를 뉴스 데스크 앵커가 브리핑하듯 한국어 2~4문장으로 정리해 주세요."
     )
-    body = json.dumps(
-        {
-            "systemInstruction": {"parts": [{"text": SUMMARY_SYSTEM}]},
-            "contents": [{"role": "user", "parts": [{"text": user}]}],
-            "generationConfig": {
-                "maxOutputTokens": SUMMARY_MAX_TOKENS,
-                "temperature": 0.3,
-                # Gemini 2.5 flash "thinks" by default and would consume the
-                # small token budget before writing; disable it for a direct answer.
-                "thinkingConfig": {"thinkingBudget": 0},
-            },
-        }
-    ).encode("utf-8")
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{model}:generateContent"
-    )
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        candidates = data.get("candidates") or []
-        if not candidates:
-            print(f"[warn] no summary returned for {ticker} (empty candidates).")
-            return None
-        parts = candidates[0].get("content", {}).get("parts") or []
-        text = "".join(p.get("text", "") for p in parts).strip()
-        return text or None
-    except Exception as exc:  # noqa: BLE001 - summary is best-effort, never fatal
-        print(f"[warn] summary failed for {ticker}: {exc}")
-        return None
+
+    models = [model] + [m for m in SUMMARY_FALLBACK_MODELS if m != model]
+    last_err = None
+    for candidate in models:
+        for attempt in (1, 2):
+            try:
+                text = _gemini_generate(candidate, api_key, user)
+                if text:
+                    return text
+                last_err = f"{candidate}: empty response"
+                break  # empty answer -> try the next model
+            except Exception as exc:  # noqa: BLE001 - best-effort, never fatal
+                detail = ""
+                try:
+                    detail = exc.read().decode("utf-8")[:200]  # HTTPError body
+                except Exception:  # noqa: BLE001
+                    pass
+                last_err = f"{candidate}: {exc} {detail}".strip()
+                transient = any(
+                    code in str(exc) for code in ("429", "500", "502", "503", "504")
+                )
+                if transient and attempt == 1:
+                    time.sleep(3)
+                    continue  # one quick retry for rate limit / server hiccup
+                break  # otherwise move on to the next model
+
+    LAST_SUMMARY_ERROR = last_err
+    print(f"[warn] summary failed for {ticker}: {last_err}")
+    return None
 
 
 def summarize_all(new_items):
     """Summarize each ticker's news. Returns {ticker: summary_text}."""
+    global LAST_SUMMARY_ERROR
+    LAST_SUMMARY_ERROR = None
     if os.environ.get("SUMMARIZE", "1") == "0" or os.environ.get("DRY_RUN") == "1":
         return {}
     if not (
@@ -539,7 +572,7 @@ def _clean_title(title):
     return re.sub(r"\s+[-|]\s+[^-|]+$", "", title).strip()
 
 
-def build_email_html(new_items, summaries=None):
+def build_email_html(new_items, summaries=None, summary_error=None):
     """Render a per-ticker news briefing.
 
     When an AI briefing exists for a ticker, only the briefing is shown (raw
@@ -581,14 +614,28 @@ def build_email_html(new_items, summaries=None):
         )
 
     if not any(summaries.get(t) for t in by_ticker):
+        key_set = bool(
+            os.environ.get("GEMINI_API_KEY", "").strip()
+            or os.environ.get("GOOGLE_API_KEY", "").strip()
+        )
+        if not key_set:
+            note = (
+                "ℹ️ AI 브리핑이 아직 생성되지 않아 <b>제목만</b> 표시했습니다. "
+                "GitHub 레포 <b>Settings → Secrets → Actions</b> 에 "
+                "<b>GEMINI_API_KEY</b> 를 등록하면, 종목별로 제목을 분석해 "
+                "하나의 뉴스 브리핑으로 만들어 드립니다."
+            )
+        else:
+            reason = html.escape(str(summary_error or "알 수 없는 오류"))
+            note = (
+                "⚠️ AI 브리핑 생성에 <b>실패</b>해 제목만 표시했습니다. "
+                f"(키는 정상 등록됨)<br>원인: <code>{reason}</code><br>"
+                "무료 사용량 초과(429)라면 하루 지나면 자동으로 복구됩니다."
+            )
         parts.append(
             "<p style='background:#fff6e5;border-left:3px solid #f5a623;"
             "padding:8px 12px;color:#7a5b00;font-size:13px;margin:16px 0;"
-            "border-radius:4px'>"
-            "ℹ️ AI 브리핑이 아직 생성되지 않아 <b>제목만</b> 표시했습니다. "
-            "GitHub 레포 <b>Settings → Secrets → Actions</b> 에 "
-            "<b>GEMINI_API_KEY</b> 를 등록하면, 종목별로 제목을 분석해 "
-            "하나의 뉴스 브리핑으로 만들어 드립니다.</p>"
+            f"border-radius:4px'>{note}</p>"
         )
     parts.append(
         "<p style='color:#999;font-size:12px;margin-top:24px'>"
@@ -878,7 +925,7 @@ def main():
     write_shorts_json(new_items, summaries)   # bridge: feed the shorts-generator
     tickers_line = ", ".join(sorted({i["ticker"] for i in new_items}))
     subject = f"📰 오늘의 종목 뉴스 브리핑 ({len(new_items)}건): {tickers_line}"
-    body = build_email_html(new_items, summaries)
+    body = build_email_html(new_items, summaries, LAST_SUMMARY_ERROR)
     ok = send_email(subject, body)
 
     # Auto-publish the same briefing to Blogger (API v3) titled
