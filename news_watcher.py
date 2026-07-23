@@ -71,8 +71,9 @@ SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
 MAX_AGE_HOURS = 28                # only email articles published within this window (once-daily run + buffer)
 MAX_PER_TICKER = 20               # at most this many links per ticker per email
 SUMMARY_MODEL = "gemini-flash-lite-latest"  # Google Gemini model (free tier) for summaries
-# Tried in order when the primary model fails (rate limit, model unavailable...).
-SUMMARY_FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
+# Fallbacks tried in order. Use only "Flash Lite" models: their free-tier RPM
+# limit is 10-15 vs plain "Flash" (only 5), so they are far less likely to 429.
+SUMMARY_FALLBACK_MODELS = ["gemini-2.5-flash-lite", "gemini-2.0-flash-lite"]
 SUMMARY_MAX_TOKENS = 700            # cap on the summary length per ticker
 # Set when every Gemini attempt fails, so the email can say why (not "no key").
 LAST_SUMMARY_ERROR = None
