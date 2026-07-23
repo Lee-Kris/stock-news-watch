@@ -437,6 +437,18 @@ SUMMARY_SYSTEM = (
     "Korean briefing text, nothing else."
 )
 
+# Batch variant: one call summarizes ALL tickers at once (keeps free-tier
+# usage to a single request per run, avoiding the daily 429 quota).
+SUMMARY_BATCH_SYSTEM = (
+    "You are a news-desk anchor writing short Korean market briefings. For each "
+    "stock ticker given (with its headlines), write a brief anchor-style briefing "
+    "in flowing Korean prose (2-4 sentences, not bullet points), covering only "
+    "substantive developments (earnings, products, deals, guidance, regulation, "
+    "analyst actions); factual and neutral; no investment advice or price "
+    "speculation. Respond with a single JSON object that maps each ticker "
+    "(uppercase) to its Korean briefing string, and nothing else."
+)
+
 
 def _gemini_generate(model, api_key, user_text):
     """One Gemini generateContent call. Returns the text (may be ""), or raises."""
@@ -521,31 +533,124 @@ def summarize_ticker(ticker, items, model=SUMMARY_MODEL):
     return None
 
 
+def _gemini_batch_call(model, api_key, prompt, max_tokens):
+    """One Gemini call returning JSON text. Returns "" on empty; raises on HTTP error."""
+    body = json.dumps(
+        {
+            "systemInstruction": {"parts": [{"text": SUMMARY_BATCH_SYSTEM}]},
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": max_tokens,
+                "temperature": 0.3,
+                "responseMimeType": "application/json",
+                "thinkingConfig": {"thinkingBudget": 0},
+            },
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model}:generateContent",
+        data=body,
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=45) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    candidates = data.get("candidates") or []
+    if not candidates:
+        return ""
+    parts = candidates[0].get("content", {}).get("parts") or []
+    return "".join(p.get("text", "") for p in parts).strip()
+
+
 def summarize_all(new_items):
-    """Summarize each ticker's news. Returns {ticker: summary_text}."""
+    """Summarize EVERY ticker's news in a single Gemini call. {ticker: text}.
+
+    One batched request per run (instead of one per ticker) keeps free-tier
+    usage low so the daily 429 quota is not exhausted after a few runs.
+    """
     global LAST_SUMMARY_ERROR
     LAST_SUMMARY_ERROR = None
     if os.environ.get("SUMMARIZE", "1") == "0" or os.environ.get("DRY_RUN") == "1":
         return {}
-    if not (
+    api_key = (
         os.environ.get("GEMINI_API_KEY", "").strip()
         or os.environ.get("GOOGLE_API_KEY", "").strip()
-    ):
-        print(
-            "[warn] GEMINI_API_KEY not set -- sending headline digest only "
-            "(no AI briefing). Add the secret to enable per-ticker briefings."
-        )
+    )
+    if not api_key:
+        print("[warn] GEMINI_API_KEY not set -- sending headline digest only.")
         return {}
+
     by_ticker = {}
     for it in new_items:
         by_ticker.setdefault(it["ticker"], []).append(it)
+    if not by_ticker:
+        return {}
+
+    blocks = []
+    for ticker in sorted(by_ticker):
+        heads = "\n".join(f"- {it['title']}" for it in by_ticker[ticker])
+        blocks.append(f"[{ticker}]\n{heads}")
+    prompt = (
+        "다음은 종목별 오늘의 뉴스 제목입니다. 각 종목마다 뉴스 데스크 앵커가 "
+        "브리핑하듯 한국어 2~4문장으로 정리해 주세요. 반드시 JSON 객체 하나로만 "
+        "응답하고, 키는 종목 티커(대문자), 값은 그 종목의 한국어 브리핑 문자열입니다.\n\n"
+        + "\n\n".join(blocks)
+    )
+    max_tokens = min(4000, 400 + 300 * len(by_ticker))
+
+    models = [SUMMARY_MODEL] + [m for m in SUMMARY_FALLBACK_MODELS if m != SUMMARY_MODEL]
+    raw, last_err = None, None
+    for candidate in models:
+        for attempt in (1, 2):
+            try:
+                raw = _gemini_batch_call(candidate, api_key, prompt, max_tokens)
+                if raw:
+                    break
+                last_err = f"{candidate}: empty response"
+            except Exception as exc:  # noqa: BLE001 - best-effort, never fatal
+                detail = ""
+                try:
+                    detail = exc.read().decode("utf-8")[:200]  # HTTPError body
+                except Exception:  # noqa: BLE001
+                    pass
+                last_err = f"{candidate}: {exc} {detail}".strip()
+                if "429" in str(exc) and attempt == 1:
+                    time.sleep(20)  # rate limit: wait once, then retry same model
+                    continue
+                break  # non-429, or already retried -> next model
+        if raw:
+            break
+
+    if not raw:
+        LAST_SUMMARY_ERROR = last_err
+        print(f"[warn] batched summary failed: {last_err}")
+        return {}
+
     summaries = {}
-    for ticker, its in by_ticker.items():
-        summary = summarize_ticker(ticker, its)
-        if summary:
-            summaries[ticker] = summary
+    try:
+        cleaned = raw.strip().strip("`")
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start != -1 and end != -1:
+            cleaned = cleaned[start:end + 1]
+        parsed = json.loads(cleaned)
+        for ticker in by_ticker:
+            val = (
+                parsed.get(ticker)
+                or parsed.get(ticker.upper())
+                or parsed.get(ticker.lower())
+            )
+            if isinstance(val, str) and val.strip():
+                summaries[ticker] = val.strip()
+    except Exception as exc:  # noqa: BLE001
+        LAST_SUMMARY_ERROR = f"parse error: {exc}"
+        print(f"[warn] could not parse batched summary JSON: {exc}")
+        return {}
+
     if summaries:
-        print(f"[info] generated AI summaries for {len(summaries)} ticker(s).")
+        print(f"[info] generated AI briefings for {len(summaries)} ticker(s) in 1 call.")
+    else:
+        LAST_SUMMARY_ERROR = last_err or "empty parsed result"
     return summaries
 
 
