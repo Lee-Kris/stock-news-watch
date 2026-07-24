@@ -909,7 +909,43 @@ def write_shorts_json(new_items, summaries, path="data/latest_shorts.json"):
         print(f"[warn] could not write {path}: {exc}")
 
 
+def gemini_ping():
+    """TEST-ONLY: make one tiny Gemini call to check the key/quota (429?).
+
+    Sends nothing, publishes nothing, and does not touch seen.json. Always
+    returns 0 (the log line tells the story). Triggered by GEMINI_PING=1.
+    """
+    api_key = (
+        os.environ.get("GEMINI_API_KEY", "").strip()
+        or os.environ.get("GOOGLE_API_KEY", "").strip()
+    )
+    if not api_key:
+        print("[test] GEMINI_API_KEY 없음 - 키를 먼저 등록하세요.")
+        return 0
+    models = [SUMMARY_MODEL] + [
+        m for m in SUMMARY_FALLBACK_MODELS if m != SUMMARY_MODEL
+    ]
+    for model in models:
+        try:
+            _gemini_batch_call(model, api_key, "한 단어로 'OK'만 답하세요.", 50)
+            print(f"[test] ✅ Gemini 호출 성공 (모델: {model}) - 429 없음, 키/한도 정상.")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8")[:200]
+            except Exception:  # noqa: BLE001
+                pass
+            tag = "429 (사용량 초과)" if "429" in str(exc) else str(exc)
+            print(f"[test] ❌ {model} 실패: {tag} {detail}".strip())
+    print("[test] 모든 모델 실패 - 아직 이 프로젝트 한도가 소진된 상태로 보입니다.")
+    return 0
+
+
 def main():
+    if os.environ.get("GEMINI_PING") == "1":
+        return gemini_ping()
+
     tickers = load_tickers()
     if not tickers:
         print("[error] no tickers to watch. Exiting.")

@@ -11,6 +11,10 @@ on:
         description: "지금 최근 뉴스를 강제로 발송/블로그 포스팅 (테스트용)"
         type: boolean
         default: false
+      ping:
+        description: "Gemini 키/한도만 점검 (메일·블로그 발송 안 함, 429 확인용)"
+        type: boolean
+        default: false
 
 # seen.json 을 커밋해서 상태를 보존하려면 쓰기 권한이 필요합니다.
 permissions:
@@ -48,6 +52,7 @@ jobs:
           BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
           BLOGGER_BLOG_URL: ${{ secrets.BLOGGER_BLOG_URL }}
           FORCE_SEND: ${{ inputs.force && '1' || '0' }}
+          GEMINI_PING: ${{ inputs.ping && '1' || '0' }}
         run: python news_watcher.py
 
       - name: Persist seen.json
