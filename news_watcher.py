@@ -765,6 +765,35 @@ def market_snapshot_html(rows):
     )
 
 
+def market_to_json(rows):
+    """Market snapshot in a JSON-friendly shape for the shorts generator.
+
+    Each entry carries raw numbers plus a ready-to-read Korean ``text`` line.
+    """
+    out = []
+    for r in rows or []:
+        d = r["decimals"]
+        price_txt = f"{r['prefix']}{r['price']:,.{d}f}{r['suffix']}"
+        item = {
+            "label": r["label"],
+            "value": round(r["price"], d),
+            "unit": r["suffix"] or "USD",
+            "text": f"{r['label']} {price_txt}",
+        }
+        if r["change"] is not None:
+            arrow = "▲" if r["change"] >= 0 else "▼"
+            amount = f"{abs(r['change']):,.{d}f}"
+            item["change"] = round(r["change"], d)
+            if r["show_pct"] and r["pct"] is not None:
+                item["change_pct"] = round(r["pct"], 2)
+                tail = f"{arrow}{amount}, {abs(r['pct']):.2f}%"
+            else:
+                tail = f"{arrow}{amount}%p"
+            item["text"] = f"{r['label']} {price_txt} (전일 대비 {tail})"
+        out.append(item)
+    return out
+
+
 def _clean_title(title):
     """Strip the trailing ' - Publisher' suffix from a Google News title."""
     return re.sub(r"\s+[-|]\s+[^-|]+$", "", title).strip()
@@ -964,7 +993,7 @@ def kst_today_title():
     return f"{kst.year}년 {kst.month}월 {kst.day}일 포트폴리오 뉴스"
 
 
-def write_shorts_json(new_items, summaries, path="data/latest_shorts.json"):
+def write_shorts_json(new_items, summaries, market=None, path="data/latest_shorts.json"):
     """Publish ALL tickers' briefings so the shorts-generator repo can weave them
     into a single '오늘의 증시' Short (JSON bridge). Writes
     {date, topic, items:[{ticker,name,summary}...], script}, ordered by how many
@@ -990,6 +1019,7 @@ def write_shorts_json(new_items, summaries, path="data/latest_shorts.json"):
         "date": kst.strftime("%Y-%m-%d"),               # KST date (matches blog title)
         "generated_at": kst.strftime("%Y-%m-%d %H:%M KST"),  # exact write time, for freshness checks
         "topic": "오늘의 증시",
+        "market": market_to_json(market),               # WTI / US 10Y snapshot
         "items": items,
         # Fallback single script (top ticker) for consumers that don't recompose.
         "ticker": items[0]["ticker"],
@@ -1159,10 +1189,10 @@ def main():
 
     print(f"[info] {len(new_items)} new article(s) -> sending email.")
     summaries = summarize_all(new_items)
-    write_shorts_json(new_items, summaries)   # bridge: feed the shorts-generator
+    market = fetch_market_snapshot()   # WTI / US 10Y (shown in mail + shorts JSON)
+    write_shorts_json(new_items, summaries, market)   # bridge: feed the shorts-generator
     tickers_line = ", ".join(sorted({i["ticker"] for i in new_items}))
     subject = f"📰 오늘의 종목 뉴스 브리핑 ({len(new_items)}건): {tickers_line}"
-    market = fetch_market_snapshot()   # WTI / US 10Y, shown at the top of the mail
     body = build_email_html(new_items, summaries, LAST_SUMMARY_ERROR, market)
     ok = send_email(subject, body)
 
