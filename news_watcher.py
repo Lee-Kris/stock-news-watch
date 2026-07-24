@@ -688,12 +688,89 @@ def summary_to_html(summary):
 
 # --- Email -------------------------------------------------------------------
 
+# --- Market snapshot (WTI / US 10Y) ------------------------------------------
+# Fetched from Yahoo Finance's public chart endpoint (no API key). Best-effort:
+# any failure just omits the row so the digest is never blocked.
+# (label, yahoo symbol, prefix, suffix, decimals, show_relative_pct)
+MARKET_SYMBOLS = [
+    ("WTI 유가", "CL=F", "$", "", 2, True),
+    ("미 10년물 국채금리", "^TNX", "", "%", 3, False),
+]
+
+
+def fetch_market_snapshot():
+    """Return [{label, price, change, pct, prefix, suffix, decimals, show_pct}]."""
+    rows = []
+    for label, symbol, prefix, suffix, decimals, show_pct in MARKET_SYMBOLS:
+        try:
+            url = (
+                "https://query1.finance.yahoo.com/v8/finance/chart/"
+                f"{quote_plus(symbol)}?range=1d&interval=1d"
+            )
+            request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(request, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            meta = ((data.get("chart") or {}).get("result") or [{}])[0].get("meta") or {}
+            price = meta.get("regularMarketPrice")
+            prev = meta.get("chartPreviousClose") or meta.get("previousClose")
+            if price is None:
+                print(f"[warn] no price for {symbol}")
+                continue
+            change = (price - prev) if prev else None
+            pct = (change / prev * 100) if (change is not None and prev) else None
+            rows.append(
+                {
+                    "label": label, "price": price, "change": change, "pct": pct,
+                    "prefix": prefix, "suffix": suffix, "decimals": decimals,
+                    "show_pct": show_pct,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - market data is best-effort
+            print(f"[warn] market data failed for {symbol}: {exc}")
+    if rows:
+        print(f"[info] market snapshot: {len(rows)} indicator(s).")
+    return rows
+
+
+def market_snapshot_html(rows):
+    """Render the market snapshot as a compact box for the top of the email."""
+    if not rows:
+        return ""
+    cells = []
+    for r in rows:
+        d = r["decimals"]
+        price = f"{r['prefix']}{r['price']:,.{d}f}{r['suffix']}"
+        delta = ""
+        if r["change"] is not None:
+            up = r["change"] >= 0
+            color = "#d93025" if up else "#1a73e8"   # 한국식: 상승 빨강 / 하락 파랑
+            arrow = "▲" if up else "▼"
+            amount = f"{abs(r['change']):,.{d}f}"
+            if r["show_pct"] and r["pct"] is not None:
+                tail = f" ({abs(r['pct']):.2f}%)"
+            else:
+                tail = "%p"   # yields move in percentage points
+            delta = (
+                f"<span style='color:{color};font-size:13px'> "
+                f"{arrow}{amount}{tail}</span>"
+            )
+        cells.append(
+            "<span style='display:inline-block;margin:0 20px 4px 0'>"
+            f"<span style='color:#555;font-size:13px'>{html.escape(r['label'])}</span> "
+            f"<b style='font-size:15px'>{price}</b>{delta}</span>"
+        )
+    return (
+        "<div style='background:#f8f9fa;border:1px solid #e3e6ea;border-radius:6px;"
+        "padding:10px 14px;margin:0 0 14px'>" + "".join(cells) + "</div>"
+    )
+
+
 def _clean_title(title):
     """Strip the trailing ' - Publisher' suffix from a Google News title."""
     return re.sub(r"\s+[-|]\s+[^-|]+$", "", title).strip()
 
 
-def build_email_html(new_items, summaries=None, summary_error=None):
+def build_email_html(new_items, summaries=None, summary_error=None, market=None):
     """Render a per-ticker news briefing.
 
     When an AI briefing exists for a ticker, only the briefing is shown (raw
@@ -711,6 +788,7 @@ def build_email_html(new_items, summaries=None, summary_error=None):
         f"<h2 style='margin:0 0 12px'>📰 오늘의 종목 뉴스 브리핑 "
         f"<span style='font-weight:400;color:#888;font-size:13px'>"
         f"({len(new_items)}건)</span></h2>",
+        market_snapshot_html(market),
     ]
     for ticker in sorted(by_ticker):
         parts.append(
@@ -1084,7 +1162,8 @@ def main():
     write_shorts_json(new_items, summaries)   # bridge: feed the shorts-generator
     tickers_line = ", ".join(sorted({i["ticker"] for i in new_items}))
     subject = f"📰 오늘의 종목 뉴스 브리핑 ({len(new_items)}건): {tickers_line}"
-    body = build_email_html(new_items, summaries, LAST_SUMMARY_ERROR)
+    market = fetch_market_snapshot()   # WTI / US 10Y, shown at the top of the mail
+    body = build_email_html(new_items, summaries, LAST_SUMMARY_ERROR, market)
     ok = send_email(subject, body)
 
     # Auto-publish the same briefing to Blogger (API v3) titled
