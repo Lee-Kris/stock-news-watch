@@ -73,7 +73,7 @@ MAX_PER_TICKER = 20               # at most this many links per ticker per email
 SUMMARY_MODEL = "gemini-flash-lite-latest"  # Google Gemini model (free tier) for summaries
 # Fallbacks tried in order. Use only "Flash Lite" models: their free-tier RPM
 # limit is 10-15 vs plain "Flash" (only 5), so they are far less likely to 429.
-SUMMARY_FALLBACK_MODELS = ["gemini-2.5-flash-lite", "gemini-2.0-flash-lite"]
+SUMMARY_FALLBACK_MODELS = ["gemini-flash-latest"]
 SUMMARY_MAX_TOKENS = 700            # cap on the summary length per ticker
 # Set when every Gemini attempt fails, so the email can say why (not "no key").
 LAST_SUMMARY_ERROR = None
@@ -534,18 +534,13 @@ def summarize_ticker(ticker, items, model=SUMMARY_MODEL):
     return None
 
 
-def _gemini_batch_call(model, api_key, prompt, max_tokens):
-    """One Gemini call returning JSON text. Returns "" on empty; raises on HTTP error."""
+def _gemini_post(model, api_key, prompt, gen_config):
+    """Low-level Gemini generateContent POST. Returns text ("" if none); raises on HTTP error."""
     body = json.dumps(
         {
             "systemInstruction": {"parts": [{"text": SUMMARY_BATCH_SYSTEM}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "maxOutputTokens": max_tokens,
-                "temperature": 0.3,
-                "responseMimeType": "application/json",
-                "thinkingConfig": {"thinkingBudget": 0},
-            },
+            "generationConfig": gen_config,
         }
     ).encode("utf-8")
     request = urllib.request.Request(
@@ -562,6 +557,26 @@ def _gemini_batch_call(model, api_key, prompt, max_tokens):
         return ""
     parts = candidates[0].get("content", {}).get("parts") or []
     return "".join(p.get("text", "") for p in parts).strip()
+
+
+def _gemini_batch_call(model, api_key, prompt, max_tokens):
+    """One Gemini call. Tries a rich config first; if the model rejects an
+    optional arg (HTTP 400 INVALID_ARGUMENT), retries with a bare config so
+    model-to-model param differences never break us. Raises on non-400 errors."""
+    rich = {
+        "maxOutputTokens": max_tokens,
+        "temperature": 0.3,
+        "responseMimeType": "application/json",
+    }
+    try:
+        return _gemini_post(model, api_key, prompt, rich)
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "code", None) == 400:
+            # Some models reject responseMimeType (and others). Retry minimal.
+            return _gemini_post(
+                model, api_key, prompt, {"maxOutputTokens": max_tokens, "temperature": 0.3}
+            )
+        raise
 
 
 def summarize_all(new_items):
