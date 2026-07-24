@@ -907,8 +907,10 @@ def write_shorts_json(new_items, summaries, path="data/latest_shorts.json"):
                       "summary": summaries[t]})
     if not items:
         return
+    kst = datetime.now(timezone(timedelta(hours=9)))
     payload = {
-        "date": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d"),
+        "date": kst.strftime("%Y-%m-%d"),               # KST date (matches blog title)
+        "generated_at": kst.strftime("%Y-%m-%d %H:%M KST"),  # exact write time, for freshness checks
         "topic": "오늘의 증시",
         "items": items,
         # Fallback single script (top ticker) for consumers that don't recompose.
