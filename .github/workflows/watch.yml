@@ -51,7 +51,6 @@ jobs:
           BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
           BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
           BLOGGER_BLOG_URL: ${{ secrets.BLOGGER_BLOG_URL }}
-          NAVER_BLOG_EMAIL: ${{ secrets.NAVER_BLOG_EMAIL }}
           FORCE_SEND: ${{ inputs.force && '1' || '0' }}
           GEMINI_PING: ${{ inputs.ping && '1' || '0' }}
         run: python news_watcher.py

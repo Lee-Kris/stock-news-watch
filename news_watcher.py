@@ -29,9 +29,6 @@ Environment variables:
                             resolved from it when BLOGGER_BLOG_ID is unset.
                             When all Blogger vars are set, the same briefing is
                             auto-published as a post titled "YYYY년 M월 D일 포트폴리오 뉴스".
-    NAVER_BLOG_EMAIL    Naver Blog "메일로 글쓰기" (post-by-email) secret address.
-                        If set, the same briefing is emailed there so Naver Blog
-                        auto-publishes it (category is set in Naver's settings).
     FORCE_SEND          If "1", email/post the recent articles even if already
                         seen (on-demand test send).
 """
@@ -1131,14 +1128,6 @@ def main():
     # Auto-publish the same briefing to Blogger (API v3) titled
     # "YYYY년 M월 D일 포트폴리오 뉴스", when Blogger secrets are configured.
     post_to_blogger(kst_today_title(), body)
-
-    # Auto-publish to Naver Blog via its "메일로 글쓰기" (post-by-email) address.
-    # Naver has no public write API, so this reuses the email path; the SUBJECT
-    # becomes the post title. Category is set in Naver's post-by-email settings.
-    naver = os.environ.get("NAVER_BLOG_EMAIL", "").strip()
-    if naver:
-        posted = send_email(kst_today_title(), body, recipient=naver)
-        print(f"[info] Naver blog post {'sent' if posted else 'FAILED'}.")
 
     return 0 if ok else 2
 
