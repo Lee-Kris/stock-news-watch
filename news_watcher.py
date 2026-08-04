@@ -67,6 +67,23 @@ SEEN_FILE = "seen.json"
 NOISE_FILTERS_FILE = "noise_filters.txt"
 PAYWALL_FILTERS_FILE = "paywall_filters.txt"
 TICKER_NAMES_FILE = "ticker_names.txt"
+# Korean display names shown next to each ticker in the email/briefing.
+TICKER_KR = {
+    "AAPL": "애플",
+    "PLTR": "팔란티어",
+    "NVDA": "엔비디아",
+    "GOOGL": "구글",
+    "MRVL": "마벨 테크놀러지",
+    "ARM": "ARM 홀딩스",
+    "ONDS": "온다스 홀딩스",
+    "SPCX": "스페이스 X",
+}
+
+
+def ticker_label(ticker):
+    """Return 'AAPL (애플)' when a Korean name is known, else the bare ticker."""
+    kr = TICKER_KR.get(ticker.upper())
+    return f"{ticker} ({kr})" if kr else ticker
 SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
 MAX_AGE_HOURS = 28                # only email articles published within this window (once-daily run + buffer)
 MAX_PER_TICKER = 20               # at most this many links per ticker per email
@@ -605,12 +622,16 @@ def summarize_all(new_items):
 
     blocks = []
     for ticker in sorted(by_ticker):
+        kr = TICKER_KR.get(ticker.upper(), "")
+        head = f"[{ticker}] 회사명: {kr}" if kr else f"[{ticker}]"
         heads = "\n".join(f"- {it['title']}" for it in by_ticker[ticker])
-        blocks.append(f"[{ticker}]\n{heads}")
+        blocks.append(f"{head}\n{heads}")
     prompt = (
         "다음은 종목별 오늘의 뉴스 제목입니다. 각 종목마다 뉴스 데스크 앵커가 "
-        "브리핑하듯 한국어 2~4문장으로 정리해 주세요. 반드시 JSON 객체 하나로만 "
-        "응답하고, 키는 종목 티커(대문자), 값은 그 종목의 한국어 브리핑 문자열입니다.\n\n"
+        "브리핑하듯 한국어 2~4문장으로 정리해 주세요. 본문에서 회사를 부를 때는 위에 "
+        "적힌 한국어 회사명(예: 애플, 엔비디아)으로 표기하고, 첫 등장 시 'AAPL(애플)'처럼 "
+        "티커와 함께 써 주세요. 반드시 JSON 객체 하나로만 응답하고, 키는 종목 "
+        "티커(대문자), 값은 그 종목의 한국어 브리핑 문자열입니다.\n\n"
         + "\n\n".join(blocks)
     )
     max_tokens = min(4000, 400 + 300 * len(by_ticker))
@@ -792,7 +813,7 @@ def build_email_html(new_items, summaries=None, summary_error=None, market=None)
     ]
     for ticker in sorted(by_ticker):
         parts.append(
-            f"<h3 style='margin:20px 0 6px;color:#0b57d0'>{html.escape(ticker)}</h3>"
+            f"<h3 style='margin:20px 0 6px;color:#0b57d0'>{html.escape(ticker_label(ticker))}</h3>"
         )
         if summaries.get(ticker):
             parts.append(summary_to_html(summaries[ticker]))
