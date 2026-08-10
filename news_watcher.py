@@ -716,6 +716,8 @@ def summary_to_html(summary):
 MARKET_SYMBOLS = [
     ("WTI 유가", "CL=F", "$", "", 2, True),
     ("미 10년물 국채금리", "^TNX", "", "%", 3, False),
+    ("원/달러 환율", "KRW=X", "", "원", 2, True),
+    ("달러 인덱스", "DX-Y.NYB", "", "", 2, True),
 ]
 
 
