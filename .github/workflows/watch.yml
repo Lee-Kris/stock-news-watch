@@ -16,9 +16,11 @@ on:
         type: boolean
         default: false
 
-# seen.json 을 커밋해서 상태를 보존하려면 쓰기 권한이 필요합니다.
+# seen.json 을 커밋해서 상태를 보존하려면 contents:write,
+# 오래된 실행 로그를 자동 정리하려면 actions:write 권한이 필요합니다.
 permissions:
   contents: write
+  actions: write
 
 # 같은 워크플로가 겹쳐 돌지 않도록 직렬화 (상태 파일 충돌 방지).
 concurrency:
@@ -76,3 +78,16 @@ jobs:
           done
           echo "::error::failed to push seen.json after 3 attempts"
           exit 1
+
+      - name: Prune old workflow runs (keep newest 20)
+        if: always()   # 저장 공간 절약: 최근 20개만 남기고 오래된 실행 로그 삭제
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ids=$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" \
+            --jq '.workflow_runs | sort_by(.created_at) | reverse | .[20:] | .[].id')
+          for id in $ids; do
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/$id" \
+              && echo "deleted old run $id" || echo "skip run $id"
+          done
