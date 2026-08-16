@@ -84,7 +84,7 @@ def ticker_label(ticker):
     """Return 'AAPL (애플)' when a Korean name is known, else the bare ticker."""
     kr = TICKER_KR.get(ticker.upper())
     return f"{ticker} ({kr})" if kr else ticker
-SEEN_RETENTION_DAYS = 30          # forget seen ids older than this
+SEEN_RETENTION_DAYS = 14          # forget seen ids older than this
 MAX_AGE_HOURS = 28                # only email articles published within this window (once-daily run + buffer)
 MAX_PER_TICKER = 20               # at most this many links per ticker per email
 SUMMARY_MODEL = "gemini-flash-lite-latest"  # Google Gemini model (free tier) for summaries
