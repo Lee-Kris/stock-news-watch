@@ -151,7 +151,16 @@ OPTIONS_RE = re.compile(
     r"|\bput[-/ ]?call\b|\bcall[-/ ]?put\b"
     r"|\b(?:calls?)\b.{0,20}\b(?:puts?)\b|\b(?:puts?)\b.{0,20}\b(?:calls?)\b"
     r"|\$\d[\d.,]*\s?(?:calls?|puts?)\b"
-    r"|\bstrike price\b",
+    r"|\bstrike price\b"
+    # bare calls/puts used as options instruments (no "option" word nearby):
+    # "unusual call activity", "put buying", "call volume", "options sweep"
+    r"|\b(?:calls?|puts?)\s+(?:activity|buying|selling|volume|bets?|flow|"
+    r"sweeps?|spreads?|open interest|premiums?|contracts?|expir\w*)\b"
+    # descriptor + calls/puts: "bullish calls", "unusual puts", "weekly calls"
+    r"|\b(?:bullish|bearish|unusual|heavy|weekly|monthly|big|large)\s+(?:calls?|puts?)\b"
+    # verb + calls/puts: "buying puts", "load up on calls", "scooping up puts"
+    r"|\b(?:buy\w*|bought|sold|sell\w*|load\w*|grab\w*|snap\w*|pil\w*|"
+    r"scoop\w*|dump\w*|short\w*)\s+(?:up\s+)?(?:on\s+)?(?:\w+\s+){0,2}(?:calls?|puts?)\b",
     re.IGNORECASE,
 )
 
@@ -463,7 +472,13 @@ SUMMARY_BATCH_SYSTEM = (
     "in flowing Korean prose (2-4 sentences, not bullet points), covering only "
     "substantive developments (earnings, products, deals, guidance, regulation, "
     "analyst actions); factual and neutral; no investment advice or price "
-    "speculation. Respond with a single JSON object that maps each ticker "
+    "speculation. "
+    "STRICTLY EXCLUDE options/derivatives content: never mention call options, "
+    "put options, options activity/volume, unusual call/put activity, strike "
+    "prices, or bullish/bearish options bets — ignore any such headline entirely. "
+    "Also exclude pure price-action/technical chatter. If a ticker has no "
+    "substantive news left after excluding those, use an empty string \"\" for it. "
+    "Respond with a single JSON object that maps each ticker "
     "(uppercase) to its Korean briefing string, and nothing else."
 )
 
@@ -630,7 +645,10 @@ def summarize_all(new_items):
         "다음은 종목별 오늘의 뉴스 제목입니다. 각 종목마다 뉴스 데스크 앵커가 "
         "브리핑하듯 한국어 2~4문장으로 정리해 주세요. 본문에서 회사를 부를 때는 위에 "
         "적힌 한국어 회사명(예: 애플, 엔비디아)으로 표기하고, 첫 등장 시 'AAPL(애플)'처럼 "
-        "티커와 함께 써 주세요. 반드시 JSON 객체 하나로만 응답하고, 키는 종목 "
+        "티커와 함께 써 주세요. 콜옵션·풋옵션·옵션 거래량/활동·행사가 등 옵션(파생상품) "
+        "관련 내용과 단순 주가 등락/기술적 분석 내용은 절대 언급하지 말고 완전히 무시하세요. "
+        "해당 내용을 제외하고 나면 실질적인 뉴스가 없는 종목은 값을 빈 문자열(\"\")로 두세요. "
+        "반드시 JSON 객체 하나로만 응답하고, 키는 종목 "
         "티커(대문자), 값은 그 종목의 한국어 브리핑 문자열입니다.\n\n"
         + "\n\n".join(blocks)
     )
