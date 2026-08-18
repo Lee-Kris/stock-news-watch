@@ -173,8 +173,26 @@ PRICE_TALK_RE = re.compile(
     r"|\bstock quote\b|\bquote & analysis\b"
     r"|\bin real[- ]time\b"
     r"|\b(?:overvalued|undervalued|valuation|fair value)\b"
-    r"|\bbuy or sell\b|\bworth buying\b",
+    r"|\bbuy or sell\b|\bworth buying\b"
+    r"|\binteractive stock chart\b|\bstock chart\b",
     re.IGNORECASE,
+)
+
+# OCC option-contract symbols in ANY language: e.g. "ARM260911P00340000"
+# (1-6 letters + 6-digit date + C/P + 8-digit strike). These only appear on
+# options-chain / interactive-chart pages, never in real news — a dead giveaway
+# we can drop regardless of the title's language.
+OPTION_SYMBOL_RE = re.compile(r"\b[A-Za-z]{1,6}\d{6}[CP]\d{8}\b")
+
+# Korean-localized noise: Google News keeps Korean-source titles in Korean even
+# with hl=en-US, so the English regexes above miss them. Catch the Korean
+# equivalents of options / price-action / chart-page filler here.
+KOREAN_NOISE_RE = re.compile(
+    r"콜\s*옵션|풋\s*옵션|옵션"          # 콜옵션 / 풋옵션 / 옵션
+    r"|주식\s*차트|인터랙티브"           # (인터랙티브) 주식 차트 = 야후 차트 페이지
+    r"|시세|주가\s*(?:전망|예측|목표|분석)"  # 시세·주가 전망/분석
+    r"|기술적\s*분석|무빙\s*애버리지|이동\s*평균"  # 기술적 분석·이동평균
+    r"|프리\s*마켓|시간\s*외|장\s*마감"      # 프리마켓·시간외·장마감
 )
 
 
@@ -198,7 +216,8 @@ def load_noise_filters(path=NOISE_FILTERS_FILE):
 def is_noise(title, patterns):
     """True if the title looks like low-content price-action/options filler."""
     if (PRICE_MOVE_RE.search(title) or LEVERAGE_RE.search(title)
-            or OPTIONS_RE.search(title) or PRICE_TALK_RE.search(title)):
+            or OPTIONS_RE.search(title) or PRICE_TALK_RE.search(title)
+            or OPTION_SYMBOL_RE.search(title) or KOREAN_NOISE_RE.search(title)):
         return True
     return any(p.search(title) for p in patterns)
 
