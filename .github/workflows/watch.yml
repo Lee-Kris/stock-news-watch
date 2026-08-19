@@ -3,9 +3,9 @@ name: Stock News Watch
 
 on:
   schedule:
-    # 하루 1번 실행: 18:00 KST = 09:00 UTC. GitHub 사정에 따라 몇 분 지연될 수 있음.
-    # 다른 앱(05:06 / 15:06 KST)과 시간이 겹치지 않도록 저녁 시간대로 배치.
-    - cron: "0 9 * * *"   # 18:00 KST (오후 6시)
+    # 하루 1번 실행: 21:00 KST = 12:00 UTC. GitHub 사정에 따라 몇 분 지연될 수 있음.
+    # 다른 앱(05:06 / 15:06 KST)과 시간이 겹치지 않도록 밤 시간대로 배치.
+    - cron: "0 12 * * *"   # 21:00 KST (오후 9시)
   workflow_dispatch:   # Actions 탭에서 "Run workflow" 버튼으로 수동 실행/테스트
     inputs:
       force:
