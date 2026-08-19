@@ -869,6 +869,22 @@ def build_email_html(new_items, summaries=None, summary_error=None, market=None)
     return "\n".join(parts)
 
 
+def build_market_only_html(market):
+    """Market-snapshot-only body for days with no briefable ticker news."""
+    return "\n".join(
+        [
+            "<div style='font-family:-apple-system,Segoe UI,Roboto,sans-serif;"
+            "font-size:15px;color:#111;line-height:1.5'>",
+            "<h2 style='margin:0 0 12px'>📈 오늘의 시세</h2>",
+            market_snapshot_html(market),
+            "<p style='color:#666;font-size:13px;margin:12px 0'>"
+            "오늘은 브리핑할 만한 새 종목 뉴스가 없어 시세만 전해드립니다.</p>",
+            "<p style='color:#999;font-size:12px;margin-top:24px'>"
+            "Sent by stock-news-watch. Reply-free automated digest.</p></div>",
+        ]
+    )
+
+
 def send_email(subject, html_body, recipient=None):
     """Send an HTML email via Gmail SMTP over SSL. Returns True on success.
 
@@ -1151,14 +1167,23 @@ def main():
     # it rather than emailing raw headlines. If nothing survives, send nothing.
     briefed = {t for t, v in summaries.items() if isinstance(v, str) and v.strip()}
     new_items = [it for it in new_items if it["ticker"] in briefed]
-    if not new_items:
-        print(
-            "[info] no ticker produced an AI briefing "
-            f"(reason: {LAST_SUMMARY_ERROR or 'no substantive news'}); nothing sent."
-        )
-        return 0
 
     market = fetch_market_snapshot()   # WTI / US 10Y 등, 메일 상단
+
+    if not new_items:
+        # No briefable ticker news today — still send the market snapshot alone
+        # (WTI/환율/금리/달러 인덱스) so the daily digest isn't a silent no-op.
+        print(
+            "[info] no ticker produced an AI briefing "
+            f"(reason: {LAST_SUMMARY_ERROR or 'no substantive news'})."
+        )
+        if not market:
+            print("[info] market snapshot also unavailable; nothing sent.")
+            return 0
+        body = build_market_only_html(market)
+        ok = send_email("📈 오늘의 시세 (종목 뉴스 없음)", body)
+        post_to_blogger(kst_today_title(), body)
+        return 0 if ok else 2
     tickers_line = ", ".join(sorted(briefed))
     subject = f"📰 오늘의 종목 뉴스 브리핑 ({len(new_items)}건): {tickers_line}"
     body = build_email_html(new_items, summaries, LAST_SUMMARY_ERROR, market)
