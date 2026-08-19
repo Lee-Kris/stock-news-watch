@@ -87,6 +87,7 @@ def ticker_label(ticker):
 SEEN_RETENTION_DAYS = 14          # forget seen ids older than this
 MAX_AGE_HOURS = 28                # only email articles published within this window (once-daily run + buffer)
 MAX_PER_TICKER = 20               # at most this many links per ticker per email
+AI_MAX_HEADLINES = 8              # max headlines per ticker sent to Gemini (limits input tokens)
 SUMMARY_MODEL = "gemini-flash-lite-latest"  # Google Gemini model (free tier) for summaries
 # Fallbacks tried in order. Use only "Flash Lite" models: their free-tier RPM
 # limit is 10-15 vs plain "Flash" (only 5), so they are far less likely to 429.
@@ -658,7 +659,10 @@ def summarize_all(new_items):
     for ticker in sorted(by_ticker):
         kr = TICKER_KR.get(ticker.upper(), "")
         head = f"[{ticker}] 회사명: {kr}" if kr else f"[{ticker}]"
-        heads = "\n".join(f"- {it['title']}" for it in by_ticker[ticker])
+        # Cap headlines per ticker to keep Gemini input tokens (and thus usage)
+        # minimal; items are newest-first, so we keep the most recent ones.
+        items_for_ai = by_ticker[ticker][:AI_MAX_HEADLINES]
+        heads = "\n".join(f"- {it['title']}" for it in items_for_ai)
         blocks.append(f"{head}\n{heads}")
     prompt = (
         "다음은 종목별 오늘의 뉴스 제목입니다. 각 종목마다 뉴스 데스크 앵커가 "
@@ -671,30 +675,27 @@ def summarize_all(new_items):
         "티커(대문자), 값은 그 종목의 한국어 브리핑 문자열입니다.\n\n"
         + "\n\n".join(blocks)
     )
-    max_tokens = min(4000, 400 + 300 * len(by_ticker))
+    max_tokens = min(2500, 300 + 220 * len(by_ticker))
 
+    # Minimize Gemini usage (shared quota with another app): exactly ONE call per
+    # model, no same-model retry. The fallback model is only tried if the primary
+    # raised or returned empty, so a normal run is a single API request.
     models = [SUMMARY_MODEL] + [m for m in SUMMARY_FALLBACK_MODELS if m != SUMMARY_MODEL]
     raw, last_err = None, None
     for candidate in models:
-        for attempt in (1, 2):
+        try:
+            raw = _gemini_batch_call(candidate, api_key, prompt, max_tokens)
+        except Exception as exc:  # noqa: BLE001 - best-effort, never fatal
+            detail = ""
             try:
-                raw = _gemini_batch_call(candidate, api_key, prompt, max_tokens)
-                if raw:
-                    break
-                last_err = f"{candidate}: empty response"
-            except Exception as exc:  # noqa: BLE001 - best-effort, never fatal
-                detail = ""
-                try:
-                    detail = exc.read().decode("utf-8")[:200]  # HTTPError body
-                except Exception:  # noqa: BLE001
-                    pass
-                last_err = f"{candidate}: {exc} {detail}".strip()
-                if "429" in str(exc) and attempt == 1:
-                    time.sleep(20)  # rate limit: wait once, then retry same model
-                    continue
-                break  # non-429, or already retried -> next model
+                detail = exc.read().decode("utf-8")[:200]  # HTTPError body
+            except Exception:  # noqa: BLE001
+                pass
+            last_err = f"{candidate}: {exc} {detail}".strip()
+            continue  # try the fallback model
         if raw:
             break
+        last_err = f"{candidate}: empty response"
 
     if not raw:
         LAST_SUMMARY_ERROR = last_err
@@ -851,51 +852,16 @@ def build_email_html(new_items, summaries=None, summary_error=None, market=None)
         market_snapshot_html(market),
     ]
     for ticker in sorted(by_ticker):
+        briefing = summaries.get(ticker)
+        # Drop any ticker without a real AI briefing entirely — no raw-title
+        # fallback. (main() already filters these out; this is defensive.)
+        if not briefing or not briefing.strip():
+            continue
         parts.append(
             f"<h3 style='margin:20px 0 6px;color:#0b57d0'>{html.escape(ticker_label(ticker))}</h3>"
         )
-        if summaries.get(ticker):
-            parts.append(summary_to_html(summaries[ticker]))
-            continue
-        # No AI briefing — show a clean, de-duplicated headline digest
-        # (titles only, no raw links) rather than passing links through.
-        seen, titles = set(), []
-        for it in by_ticker[ticker]:
-            clean = _clean_title(it["title"])
-            if clean.lower() not in seen:
-                seen.add(clean.lower())
-                titles.append(clean)
-        lis = "".join(
-            f"<li style='margin:3px 0'>{html.escape(t)}</li>" for t in titles
-        )
-        parts.append(
-            f"<ul style='margin:4px 0;padding-left:20px;color:#333'>{lis}</ul>"
-        )
+        parts.append(summary_to_html(briefing))
 
-    if not any(summaries.get(t) for t in by_ticker):
-        key_set = bool(
-            os.environ.get("GEMINI_API_KEY", "").strip()
-            or os.environ.get("GOOGLE_API_KEY", "").strip()
-        )
-        if not key_set:
-            note = (
-                "ℹ️ AI 브리핑이 아직 생성되지 않아 <b>제목만</b> 표시했습니다. "
-                "GitHub 레포 <b>Settings → Secrets → Actions</b> 에 "
-                "<b>GEMINI_API_KEY</b> 를 등록하면, 종목별로 제목을 분석해 "
-                "하나의 뉴스 브리핑으로 만들어 드립니다."
-            )
-        else:
-            reason = html.escape(str(summary_error or "알 수 없는 오류"))
-            note = (
-                "⚠️ AI 브리핑 생성에 <b>실패</b>해 제목만 표시했습니다. "
-                f"(키는 정상 등록됨)<br>원인: <code>{reason}</code><br>"
-                "무료 사용량 초과(429)라면 하루 지나면 자동으로 복구됩니다."
-            )
-        parts.append(
-            "<p style='background:#fff6e5;border-left:3px solid #f5a623;"
-            "padding:8px 12px;color:#7a5b00;font-size:13px;margin:16px 0;"
-            f"border-radius:4px'>{note}</p>"
-        )
     parts.append(
         "<p style='color:#999;font-size:12px;margin-top:24px'>"
         "Sent by stock-news-watch. Reply-free automated digest.</p></div>"
@@ -1177,10 +1143,23 @@ def main():
             f"{len(new_items)} (<= {per_ticker} per ticker), newest first."
         )
 
-    print(f"[info] {len(new_items)} new article(s) -> sending email.")
+    print(f"[info] {len(new_items)} new article(s); summarizing...")
     summaries = summarize_all(new_items)
-    market = fetch_market_snapshot()   # WTI / US 10Y, shown at the top of the mail
-    tickers_line = ", ".join(sorted({i["ticker"] for i in new_items}))
+
+    # Keep only tickers that produced a real AI briefing. If a ticker's news
+    # can't be turned into a briefing (junk/off-topic, or AI unavailable), drop
+    # it rather than emailing raw headlines. If nothing survives, send nothing.
+    briefed = {t for t, v in summaries.items() if isinstance(v, str) and v.strip()}
+    new_items = [it for it in new_items if it["ticker"] in briefed]
+    if not new_items:
+        print(
+            "[info] no ticker produced an AI briefing "
+            f"(reason: {LAST_SUMMARY_ERROR or 'no substantive news'}); nothing sent."
+        )
+        return 0
+
+    market = fetch_market_snapshot()   # WTI / US 10Y 등, 메일 상단
+    tickers_line = ", ".join(sorted(briefed))
     subject = f"📰 오늘의 종목 뉴스 브리핑 ({len(new_items)}건): {tickers_line}"
     body = build_email_html(new_items, summaries, LAST_SUMMARY_ERROR, market)
     ok = send_email(subject, body)
